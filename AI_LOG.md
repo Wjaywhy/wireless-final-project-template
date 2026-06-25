@@ -102,17 +102,17 @@ pytest public_tests -q
 python main.py --input Test.txt --output results/received.txt --snr 12 --seed 2026 --mod qpsk --channel awgn
 ```
 
-**验证结果：** 见下方最终测试结果和端到端输出，记录于 2026-06-24。
+**验证结果：** 见下方 Level 2 正式测试结果和端到端输出，记录于 2026-06-24。
 
-## 最终测试结果
+## Level 2 正式测试结果
 
 **运行日期：** 2026-06-24
 
 | 测试类别 | 通过/总数 | 备注 |
 |---|---|---|
-| 自有测试 (tests/) | 51/51 | 全部通过 |
+| Level 2 自有测试 (tests/test_mock.py + test_e2e.py) | 53/53 | 全部通过 |
 | 公开测试 (public_tests/) | 22/22 | 全部通过 |
-| **合计 (阶段5阶段性计数)** | **73/73** | 不含 Level 3；最终总数为 101/101（见阶段6） |
+| **Level 2 合计** | **75/75** | 不含 Level 3；完整结果含 Level 3 共 101/101（见阶段6） |
 
 **CLI 实际运行：**
 
@@ -215,7 +215,7 @@ Pipeline complete in 4.65s
 | BER=0 在对数坐标不可见 | 低 | 使用检测下限绘图 + 标注 |
 | 文档数据过时（payload_bits=1544） | 低 | 更新为原始 Test.txt 的 6128 bit |
 
-所有修复已通过 73 条测试验证（51 自有 + 22 公开，阶段5阶段性计数；最终 Level 3 完成后合计 101 条，见阶段6），教师原始 Test.txt（262 字符 / 6128 bit）在 12 dB 下完全恢复（BER=0, FER=0, match=1.0, CRC=True, 耗时 4.65s）。
+所有修复已通过 Level 2 正式测试验证（53 自有 + 22 公开 = 75 条；Level 3 完成后完整合计 101 条，见阶段6），教师原始 Test.txt（262 字符 / 6128 bit）在 12 dB 下完全恢复（BER=0, FER=0, match=1.0, CRC=True, 耗时 4.65s）。
 
 ### v2.0 修复（2026-06-24）
 
@@ -430,7 +430,7 @@ python -m src.level3 --input Test.txt --output-dir results --seed 2026
 | 2026-06-24 | `TEST_PLAN.md` | 测试计划更新 | v2.0 Level 3 测试计划 |
 | 2026-06-24 | `MOCK_TEST_REPORT.md` | 测试报告更新 | 阶段 3 Level 3 Mock 结果 |
 
-## 最终测试结果（含 Level 3）
+## 完整测试结果（含 Level 3）
 
 **运行日期：** 2026-06-24
 
