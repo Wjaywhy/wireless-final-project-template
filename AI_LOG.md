@@ -112,7 +112,7 @@ python main.py --input Test.txt --output results/received.txt --snr 12 --seed 20
 |---|---|---|
 | 自有测试 (tests/) | 51/51 | 全部通过 |
 | 公开测试 (public_tests/) | 22/22 | 全部通过 |
-| **合计** | **73/73** | |
+| **合计 (阶段5阶段性计数)** | **73/73** | 不含 Level 3；最终总数为 101/101（见阶段6） |
 
 **CLI 实际运行：**
 
@@ -215,7 +215,7 @@ Pipeline complete in 4.65s
 | BER=0 在对数坐标不可见 | 低 | 使用检测下限绘图 + 标注 |
 | 文档数据过时（payload_bits=1544） | 低 | 更新为原始 Test.txt 的 6128 bit |
 
-所有修复已通过 73 条测试验证（51 自有 + 22 公开），教师原始 Test.txt（262 字符 / 6128 bit）在 12 dB 下完全恢复（BER=0, FER=0, match=1.0, CRC=True, 耗时 4.65s）。
+所有修复已通过 73 条测试验证（51 自有 + 22 公开，阶段5阶段性计数；最终 Level 3 完成后合计 101 条，见阶段6），教师原始 Test.txt（262 字符 / 6128 bit）在 12 dB 下完全恢复（BER=0, FER=0, match=1.0, CRC=True, 耗时 4.65s）。
 
 ### v2.0 修复（2026-06-24）
 
@@ -324,7 +324,7 @@ Level 3 以可选参数扩展现有单载波 QPSK 链路，新增平坦块 Rayle
 | `src/synchronization.py` | 新增 `synchronize_branches()`：多分支独立相关后合并统计量取峰值 |
 | `src/pipeline.py` | 扩展 `run_pipeline()` 签名接受 `equalizer` 和 `diversity_order`；新增 `_validate_modes()`；Rayleigh 分支：生成前缀 → 衰落 → 同步 → 信道估计 → 均衡/MRC → 接收 |
 | `main.py` | 新增 `--channel`、`--equalizer`、`--diversity-order` CLI 参数及非法组合校验 |
-| `run_level3_experiments.py` | 新建：独立多 seed 实验脚本，4 方案 × 6 SNR × 5 seed，生成 metrics JSON 和 4 张对比图 |
+| `src/level3.py` | 新建：独立多 seed 实验脚本，4 方案 × 6 SNR × 5 seed，生成 metrics JSON 和 4 张对比图 |
 
 **人工检查与修改：**
 
@@ -358,7 +358,7 @@ Level 3 以可选参数扩展现有单载波 QPSK 链路，新增平坦块 Rayle
 pytest tests/test_level3.py -v          # 26 条 Level 3 专项测试
 pytest tests/test_mock.py tests/test_e2e.py -q  # Level 2 回归
 pytest public_tests -q                   # 公开测试回归
-python run_level3_experiments.py --input Test.txt --output-dir results --seed 2026
+python -m src.level3 --input Test.txt --output-dir results --seed 2026
 ```
 
 **Level 3 测试详细结果（26/26 通过）：**
@@ -424,7 +424,7 @@ python run_level3_experiments.py --input Test.txt --output-dir results --seed 20
 | 2026-06-24 | `src/synchronization.py` | 新增功能 | `synchronize_branches()` 多分支联合同步 |
 | 2026-06-24 | `src/pipeline.py` | 功能扩展 | Level 3 Rayleigh 路径、模式校验、扩展 metrics |
 | 2026-06-24 | `main.py` | 功能扩展 | Level 3 CLI 参数与非法组合校验 |
-| 2026-06-24 | `run_level3_experiments.py` | 新文件 | 多 seed 实验扫描脚本 |
+| 2026-06-24 | `src/level3.py` | 新文件 | 多 seed 实验扫描脚本 |
 | 2026-06-24 | `tests/test_level3.py` | 新文件 | 26 条 Level 3 专项测试 |
 | 2026-06-24 | `DESIGN.md` | 设计更新 | v3.0 初始设计 + v3.1 Mock 后修订 |
 | 2026-06-24 | `TEST_PLAN.md` | 测试计划更新 | v2.0 Level 3 测试计划 |

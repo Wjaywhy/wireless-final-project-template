@@ -56,6 +56,12 @@ def _generate_prefix_symbols(n: int, seed: int) -> list[complex]:
     Uses a derived seed (``seed + 9999``) to keep the prefix random stream
     independent from scrambling and noise.  This is intentionally preserved
     from the Level 2 implementation for bit-exact AWGN regression.
+
+    Design rationale: the AWGN path retains ``seed + 9999`` (rather than
+    ``SeedSequence.spawn()``) to guarantee bit-exact backward compatibility
+    with earlier Level 2 results.  The Rayleigh path uses ``SeedSequence``
+    for strict sub-stream isolation because fading and noise streams must
+    never couple when array lengths change across experiments.
     """
     rng = np.random.default_rng(seed + 9999)
     bits = [int(x) for x in rng.integers(0, 2, size=n * 2)]
