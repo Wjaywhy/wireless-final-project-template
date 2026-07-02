@@ -1,4 +1,4 @@
-"""One-command submission verification for the wireless final project."""
+"""无线通信期末项目一键验收脚本。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ REPORT_PATH = PROJECT_ROOT / "verification_report.json"
 
 
 def sha256_file(path: Path) -> str | None:
-    """Return a file SHA-256 digest, or ``None`` when the file is missing."""
+    """返回文件 SHA-256；文件缺失时返回 ``None``。"""
     if not path.exists() or not path.is_file():
         return None
     digest = hashlib.sha256()
@@ -28,7 +28,7 @@ def sha256_file(path: Path) -> str | None:
 
 
 def run_command(args: list[str], timeout: int) -> dict[str, Any]:
-    """Run a subprocess from the project root and capture diagnostics."""
+    """在项目根目录运行子进程并保留诊断输出。"""
     env = os.environ.copy()
     env.setdefault("MPLBACKEND", "Agg")
     try:
@@ -58,7 +58,7 @@ def run_command(args: list[str], timeout: int) -> dict[str, Any]:
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    """Load a JSON object and return an empty dict on failure."""
+    """读取 JSON 对象；失败时返回空字典。"""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -67,7 +67,7 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def check_required_files() -> bool:
-    """Check source, documentation, tests, and traceability files."""
+    """检查源码、文档、测试和追溯矩阵是否存在。"""
     required = [
         "PRD.md",
         "README.md",
@@ -87,7 +87,7 @@ def check_required_files() -> bool:
 
 
 def run_cli(output_dir: Path) -> dict[str, Any]:
-    """Execute the unified AWGN CLI into *output_dir*."""
+    """执行统一 AWGN CLI，并把结果写入指定目录。"""
     output_dir.mkdir(parents=True, exist_ok=True)
     return run_command(
         [
@@ -100,24 +100,25 @@ def run_cli(output_dir: Path) -> dict[str, Any]:
             "--mod", "qpsk",
             "--channel", "awgn",
         ],
-        timeout=40,
+        timeout=120,
     )
 
 
 def metrics_schema_ok(metrics: dict[str, Any]) -> bool:
-    """Validate required metrics fields for the current schema."""
+    """校验当前 metrics.json 必需字段。"""
     required = {
         "snr_db", "seed", "modulation", "channel", "payload_bits",
         "ber", "payload_ber", "predecode_ber", "fer",
         "frame_error_indicator", "text_match_rate", "checksum_pass",
         "true_prefix_symbols", "sync_start_index", "sync_error_symbols",
-        "sync_success",
+        "sync_success", "frame_parse_strategy", "preamble_bit_errors",
+        "header_bit_errors", "crc_bit_errors", "qpsk_padding_bits",
     }
     return required.issubset(metrics)
 
 
 def manifest_schema_ok(manifest: dict[str, Any]) -> bool:
-    """Validate required run-manifest fields."""
+    """校验 run_manifest.json 必需字段。"""
     required = {
         "schema_version", "timestamp_utc", "git_commit", "git_dirty",
         "command", "python_version", "platform", "package_versions",
@@ -129,7 +130,7 @@ def manifest_schema_ok(manifest: dict[str, Any]) -> bool:
 
 
 def valid_plot_count(output_dir: Path) -> int:
-    """Count non-empty PNG files promised by the AWGN CLI."""
+    """统计 AWGN CLI 承诺的非空 PNG 图像数量。"""
     names = ["constellation.png", "ber_curve.png", "sync_peak.png"]
     return sum(
         1 for name in names
@@ -138,7 +139,7 @@ def valid_plot_count(output_dir: Path) -> int:
 
 
 def reproducible(first_dir: Path, second_dir: Path) -> bool:
-    """Check same-seed deterministic text and key metric outputs."""
+    """检查相同 seed 下文本和关键指标是否可复现。"""
     first_text = sha256_file(first_dir / "received.txt")
     second_text = sha256_file(second_dir / "received.txt")
     if first_text is None or first_text != second_text:
@@ -151,7 +152,8 @@ def reproducible(first_dir: Path, second_dir: Path) -> bool:
         "ber", "payload_ber", "predecode_ber", "fer",
         "frame_error_indicator", "text_match_rate", "checksum_pass",
         "true_prefix_symbols", "sync_start_index", "sync_error_symbols",
-        "sync_success",
+        "sync_success", "frame_parse_strategy", "preamble_bit_errors",
+        "header_bit_errors", "crc_bit_errors", "qpsk_padding_bits",
     ]
     return {key: first.get(key) for key in keys} == {
         key: second.get(key) for key in keys
@@ -159,7 +161,7 @@ def reproducible(first_dir: Path, second_dir: Path) -> bool:
 
 
 def main() -> int:
-    """Run verification checks and write ``verification_report.json``."""
+    """运行验收检查并写出 ``verification_report.json``。"""
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     first_dir = RESULT_DIR / "run1"
     second_dir = RESULT_DIR / "run2"
@@ -171,13 +173,13 @@ def main() -> int:
 
     commands["public_tests"] = run_command(
         [sys.executable, "-m", "pytest", "public_tests", "-q"],
-        timeout=90,
+        timeout=120,
     )
     checks["public_tests"] = commands["public_tests"]["returncode"] == 0
 
     commands["internal_tests"] = run_command(
         [sys.executable, "-m", "pytest", "tests", "-q"],
-        timeout=120,
+        timeout=300,
     )
     checks["internal_tests"] = commands["internal_tests"]["returncode"] == 0
 
@@ -196,7 +198,7 @@ def main() -> int:
     manifest = load_json(first_dir / "run_manifest.json")
     checks["manifest_schema"] = manifest_schema_ok(manifest)
 
-    checks["plots"] = valid_plot_count(first_dir) >= 2
+    checks["plots"] = valid_plot_count(first_dir) >= 3
 
     commands["cli_reproducibility"] = run_cli(second_dir)
     checks["reproducibility"] = (
@@ -207,6 +209,7 @@ def main() -> int:
     overall_pass = all(checks.values())
     report = {
         "overall_pass": overall_pass,
+        "summary_zh": "通过" if overall_pass else "失败",
         "checks": checks,
         "input_sha256": input_hash,
         "output_sha256": output_hash,
@@ -217,10 +220,10 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    print("Submission verification:", "PASS" if overall_pass else "FAIL")
+    print("提交验收:", "通过" if overall_pass else "失败")
     for name, passed in checks.items():
-        print(f"  {name}: {'PASS' if passed else 'FAIL'}")
-    print(f"Report: {REPORT_PATH}")
+        print(f"  {name}: {'通过' if passed else '失败'}")
+    print(f"报告路径: {REPORT_PATH}")
     return 0 if overall_pass else 1
 
 

@@ -211,7 +211,7 @@ Pipeline complete in 2.32s
 | 理论 BER 曲线公式错误 | 高 | 旧公式混合了编码后 Eb/N0 与未编码 BER 公式；修正为三重复码理论曲线 $3p_c^2 - 2p_c^3$ + 未编码 QPSK 参考 |
 | `parse_frame()` 缺少帧完整性校验 | 中 | 增加最小长度、coded_length 边界、preamble 验证 |
 | 前置符号使用高斯随机而非 QPSK | 中 | 改为经 `qpsk_modulate()` 生成标准 QPSK 符号 |
-| CLI 未拒绝 nan/inf SNR | 中 | 增加 `math.isfinite()` 检查 |
+| CLI 未拒绝 nan/inf 或极端有限 SNR | 中 | 增加集中范围校验：SNR 必须有限且位于 `[-100, 100]` dB |
 | BER=0 在对数坐标不可见 | 低 | 使用检测下限绘图 + 标注 |
 | 文档数据过时（旧 payload_bits） | 低 | 当前提交输入对齐 `public_tests/conftest.py::SAMPLE_TEXT`，更新为 5376 bit |
 
@@ -504,3 +504,43 @@ Prompt 摘要：
 - 不用有限实验声称真实 BER 为 0。
 - 不从当前默认 5 seed 实验声称固定理论 MRC dB 增益。
 - 避免重写已有历史文档的大段内容；只补充 2026-07 审计段落。
+
+## 2026-07-03 Codex 二次审计修复
+
+Prompt 摘要：
+
+- 所有新增或修改的项目文档使用中文；代码标识符、CLI 参数、JSON 字段名保留英文。
+- 修复极端 SNR、异常输出路径、12 dB 低概率整帧失败和 BER 曲线统计口径。
+- 不分析提交历史，不修改 commit，不以 `results/` 是否由某次提交生成作为判断依据。
+- 必须运行当前代码、定位问题、修改并验证。
+
+经人工审查后采纳的 AI 辅助修改：
+
+- 新增 `src/config.py`，集中定义 `MIN_SNR_DB=-100.0` 和 `MAX_SNR_DB=100.0`。
+- `main.py` 在进入通信链路前校验 SNR 和输入输出路径；用户输入错误写入中文
+  `stderr`，返回非零，不打印 traceback。
+- `src/channel.py` 在 AWGN 和 Rayleigh 信道内部复用 SNR 校验，避免绕过 CLI 后出现
+  非有限噪声功率。
+- `src/pipeline.py` 使用 `newline=""` 读写文本，防止 Windows 换行转换破坏字节级
+  复现。
+- `src/pipeline.py` 增加有限帧候选解析。失败 seed 复查显示，12 dB 混合 emoji 文本
+  的一次失败来自 `Coded Length` 头字段 1 bit 硬判决错误；候选解析用总帧长度、
+  三重复码长度关系和 CRC 选择正确候选，不读取原始输入文本。
+- `src/plotting.py` 将 `ber_curve.png` 改为每个 SNR 20 个 trial seed 的
+  `predecode_ber` 均值，并保存 `ber_curve_data.json`。
+- `scripts/verify_submission.py` 更新为中文输出、三张 AWGN 图检查和更合理的超时。
+
+新增测试：
+
+- `tests/test_cli_validation.py`：覆盖非法 SNR、正常负 SNR、非法模式参数、输入路径和
+  输出路径错误。
+- `tests/test_recovery_and_stability.py`：覆盖字节级文本恢复、动态反硬编码、AWGN 与
+  Rayleigh 指标字段，以及 12 dB 四类文本各 100 seed 稳定性。
+- `tests/test_plotting_statistics.py`：验证 BER 曲线使用 `predecode_ber` 多 seed 统计。
+- `tests/test_mock.py::test_awgn_rejects_invalid_snr`：验证信道层自身拒绝非法 SNR。
+
+明确未做的修改：
+
+- 未改变 QPSK Gray 映射、三重复码编码、CRC-32 算法或发送帧字段顺序。
+- 未将原始输入文本提供给接收端纠错，也未直接复制输入到输出。
+- 未通过筛选 seed 或手工填充数据改善稳定性和曲线。

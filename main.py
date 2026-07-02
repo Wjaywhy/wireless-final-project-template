@@ -1,32 +1,35 @@
-"""Wireless final project — CLI entry point.
+"""无线通信期末项目统一 CLI 入口。
 
-Usage::
+示例::
 
-    python main.py --input Test.txt --output results/received.txt \\
+    python main.py --input Test.txt --output results/received.txt \
                    --snr 12 --seed 2026 --mod qpsk --channel awgn
 """
 
+from __future__ import annotations
+
 import argparse
-import math
+import os
 import sys
 import time
 from pathlib import Path
 
-from src.pipeline import run_pipeline
-from src.metrics import save_metrics
-from src.plotting import generate_all_plots, plot_constellation, plot_sync_peak
+from src.config import MIN_SNR_DB, MAX_SNR_DB, validate_snr_db
 from src.manifest import build_run_manifest, write_run_manifest
+from src.metrics import save_metrics
+from src.pipeline import run_pipeline
+from src.plotting import generate_all_plots, plot_constellation, plot_sync_peak
 
 
 def _expected_plot_names(channel: str) -> list[str]:
-    """Return plot files promised by this CLI mode."""
+    """返回当前 CLI 模式承诺生成的图像文件。"""
     if channel == "awgn":
         return ["constellation.png", "ber_curve.png", "sync_peak.png"]
     return ["constellation.png", "sync_peak.png"]
 
 
 def _clear_expected_plots(output_dir: Path, names: list[str]) -> None:
-    """Remove stale plot files before generating this run's artefacts."""
+    """生成本次图像前清理旧图，避免把历史文件误判为新结果。"""
     for name in names:
         path = output_dir / name
         if path.exists():
@@ -34,7 +37,7 @@ def _clear_expected_plots(output_dir: Path, names: list[str]) -> None:
 
 
 def _valid_files(output_dir: Path, names: list[str]) -> tuple[list[str], list[str]]:
-    """Split expected files into valid and missing-or-empty names."""
+    """区分有效文件和缺失或空文件。"""
     valid = []
     invalid = []
     for name in names:
@@ -51,90 +54,159 @@ def _print_plot_failure(
         valid: list[str],
         invalid: list[str],
         plot_error: Exception | None) -> None:
-    """Print a clear plot-delivery error for CLI users and tests."""
-    print("Error: plot delivery failed.", file=sys.stderr)
-    print(f"  Expected plots: {expected}", file=sys.stderr)
-    print(f"  Valid generated plots: {valid}", file=sys.stderr)
-    print(f"  Missing or invalid plots: {invalid}", file=sys.stderr)
+    """向 CLI 用户输出可复查的图像交付错误。"""
+    print("Error: 图像交付失败。", file=sys.stderr)
+    print(f"  预期图像: {expected}", file=sys.stderr)
+    print(f"  有效生成图像: {valid}", file=sys.stderr)
+    print(f"  缺失或无效图像: {invalid}", file=sys.stderr)
     if plot_error is not None:
-        print(f"  Plot exception: {plot_error}", file=sys.stderr)
+        print(f"  绘图异常: {plot_error}", file=sys.stderr)
+
+
+def _validate_io_paths(input_path: Path, output_path: Path) -> tuple[bool, str | None]:
+    """在主流程运行前校验输入和输出路径，避免留下半生成结果。"""
+    if not input_path.exists():
+        return False, f"Error: 输入文件不存在: {input_path}"
+    if not input_path.is_file():
+        return False, f"Error: 输入路径不是普通文件: {input_path}"
+    if output_path.exists() and output_path.is_dir():
+        return False, f"Error: 输出路径不能是目录: {output_path}"
+
+    output_dir = output_path.parent if output_path.parent != Path("") else Path(".")
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, PermissionError, OSError) as error:
+        return False, (
+            f"Error: 无法创建输出目录 '{output_dir}': {error}。"
+            " 请检查父路径是否为目录以及是否具备写入权限。"
+        )
+    if not output_dir.is_dir():
+        return False, f"Error: 输出父路径不是目录: {output_dir}"
+
+    probe = output_dir / f".write_probe_{os.getpid()}"
+    try:
+        with open(probe, "wb"):
+            pass
+    except (PermissionError, OSError) as error:
+        return False, (
+            f"Error: 输出目录不可写 '{output_dir}': {error}。"
+            " 请更换 --output 或修复目录权限。"
+        )
+    finally:
+        try:
+            if probe.exists():
+                probe.unlink()
+        except OSError:
+            pass
+    return True, None
+
+
+def _normalize_argv_for_argparse(argv: list[str]) -> list[str]:
+    """兼容 ``--snr -inf`` 这类会被 argparse 误判为选项的取值。"""
+    normalized = []
+    index = 0
+    while index < len(argv):
+        if index + 1 < len(argv) and argv[index] == "--snr" \
+                and argv[index + 1].lower() in ("-inf", "-infinity"):
+            normalized.append(f"--snr={argv[index + 1]}")
+            index += 2
+            continue
+        normalized.append(argv[index])
+        index += 1
+    return normalized
 
 
 def main() -> int:
-    """Parse CLI arguments, run the pipeline, and write all output artefacts.
-
-    Returns:
-        0 on success, 1 on error.
-    """
-    parser = argparse.ArgumentParser(
-        description="Wireless communication baseband simulation"
-    )
-    parser.add_argument("--input", required=True, help="Input UTF-8 text file")
-    parser.add_argument("--output", required=True, help="Output recovered text file")
-    parser.add_argument("--snr", type=float, required=True, help="Symbol SNR (dB)")
-    parser.add_argument("--seed", type=int, required=True, help="Random seed")
-    parser.add_argument("--mod", required=True, help="Modulation (qpsk)")
+    """解析 CLI 参数、运行通信链路并写出交付文件。"""
+    parser = argparse.ArgumentParser(description="无线通信基带仿真")
+    parser.add_argument("--input", required=True, help="输入 UTF-8 文本文件")
+    parser.add_argument("--output", required=True, help="恢复文本输出路径")
+    parser.add_argument("--snr", type=float, required=True, help="符号 SNR(dB)")
+    parser.add_argument("--seed", type=int, required=True, help="随机种子")
+    parser.add_argument("--mod", required=True, help="调制方式: qpsk")
+    parser.add_argument("--channel", required=True, help="信道类型: awgn 或 rayleigh")
     parser.add_argument(
-        "--channel", required=True, choices=("awgn", "rayleigh"),
-        help="Channel type",
+        "--equalizer",
+        default="none",
+        help="接收端均衡器: none、zf 或 mmse",
     )
     parser.add_argument(
-        "--equalizer", choices=("none", "zf", "mmse"), default="none",
-        help="Receiver equalizer (default: none)",
-    )
-    parser.add_argument(
-        "--diversity-order", type=int, choices=(1, 2), default=1,
-        help="Number of receive branches (default: 1)",
+        "--diversity-order",
+        type=int,
+        default=1,
+        help="接收分支数: 1 或 2",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_argv_for_argparse(sys.argv[1:]))
 
-    if not math.isfinite(args.snr):
+    try:
+        args.snr = validate_snr_db(args.snr)
+    except ValueError:
         print(
-            f"Error: SNR must be a finite number, got {args.snr}",
+            "Error: --snr 必须是有限数，并位于 "
+            f"[{MIN_SNR_DB:g}, {MAX_SNR_DB:g}] dB 范围内；"
+            f"当前值为 {args.snr}。",
             file=sys.stderr,
         )
         return 1
 
     if args.mod not in ("qpsk",):
+        print(f"Error: 不支持的 --mod '{args.mod}'；合法值为 qpsk。", file=sys.stderr)
+        return 1
+    if args.channel not in ("awgn", "rayleigh"):
         print(
-            f"Error: unsupported modulation '{args.mod}'."
-            " Only 'qpsk' is supported.",
+            f"Error: 不支持的 --channel '{args.channel}'；合法值为 awgn 或 rayleigh。",
+            file=sys.stderr,
+        )
+        return 1
+    if args.equalizer not in ("none", "zf", "mmse"):
+        print(
+            f"Error: 不支持的 --equalizer '{args.equalizer}'；"
+            "合法值为 none、zf 或 mmse。",
+            file=sys.stderr,
+        )
+        return 1
+    if args.diversity_order not in (1, 2):
+        print(
+            f"Error: 不支持的 --diversity-order {args.diversity_order}；"
+            "合法值为 1 或 2。",
             file=sys.stderr,
         )
         return 1
     if args.channel == "awgn" and (
             args.equalizer != "none" or args.diversity_order != 1):
         print(
-            "Error: AWGN requires --equalizer none --diversity-order 1.",
+            "Error: AWGN 模式要求 --equalizer none 且 --diversity-order 1。",
             file=sys.stderr,
         )
         return 1
     if args.channel == "rayleigh" and args.diversity_order == 1 \
             and args.equalizer not in ("zf", "mmse"):
-        print(
-            "Error: single-branch Rayleigh requires --equalizer zf or mmse.",
-            file=sys.stderr,
-        )
+        print("Error: 单分支 Rayleigh 要求 --equalizer zf 或 mmse。", file=sys.stderr)
         return 1
     if args.channel == "rayleigh" and args.diversity_order == 2 \
             and args.equalizer not in ("none", "mmse"):
         print(
-            "Error: two-branch Rayleigh uses MRC; use --equalizer none "
-            "or the compatibility token mmse.",
+            "Error: 双分支 Rayleigh 使用 MRC；请使用 --equalizer none，"
+            "或使用兼容参数 mmse。",
             file=sys.stderr,
         )
         return 1
 
     argv = sys.argv[:]
-    output_dir_path = Path(args.output).parent
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    ok, path_error = _validate_io_paths(input_path, output_path)
+    if not ok:
+        print(path_error, file=sys.stderr)
+        return 1
+
+    output_dir_path = output_path.parent
     output_dir = str(output_dir_path)
-    output_dir_path.mkdir(parents=True, exist_ok=True)
     expected_plots = _expected_plot_names(args.channel)
-    min_valid_plots = 2
+    min_valid_plots = len(expected_plots)
 
     t0 = time.perf_counter()
-
     try:
         metrics = run_pipeline(
             input_path=args.input,
@@ -146,17 +218,17 @@ def main() -> int:
             equalizer=args.equalizer,
             diversity_order=args.diversity_order,
         )
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
+    except (FileNotFoundError, PermissionError, OSError) as error:
+        print(f"Error: 文件处理失败: {error}", file=sys.stderr)
         return 1
-    except Exception as e:
-        print(f"Error: pipeline failed — {e}", file=sys.stderr)
+    except Exception as error:
+        print(f"Error: 通信链路执行失败: {error}", file=sys.stderr)
         return 1
 
     try:
         save_metrics(metrics, output_dir)
-    except Exception as e:
-        print(f"Error: metrics writing failed - {e}", file=sys.stderr)
+    except (PermissionError, OSError, TypeError, ValueError) as error:
+        print(f"Error: metrics.json 写入失败: {error}", file=sys.stderr)
         return 1
 
     plot_error = None
@@ -176,8 +248,8 @@ def main() -> int:
             plot_sync_peak(
                 metrics["_corr_values"], metrics["_sync_start"], output_dir
             )
-    except Exception as e:
-        plot_error = e
+    except Exception as error:
+        plot_error = error
 
     valid_plots, invalid_plots = _valid_files(output_dir_path, expected_plots)
     if plot_error is not None or len(valid_plots) < min_valid_plots:
@@ -186,6 +258,9 @@ def main() -> int:
 
     elapsed = time.perf_counter() - t0
     generated_files = [Path(args.output).name, "metrics.json", *valid_plots]
+    ber_data_path = output_dir_path / "ber_curve_data.json"
+    if ber_data_path.exists() and ber_data_path.is_file():
+        generated_files.append("ber_curve_data.json")
     try:
         manifest = build_run_manifest(
             argv=argv,
@@ -201,11 +276,11 @@ def main() -> int:
             cwd=Path.cwd(),
         )
         manifest_path = write_run_manifest(manifest, output_dir)
-    except Exception as e:
-        print(f"Error: run manifest generation failed - {e}", file=sys.stderr)
+    except Exception as error:
+        print(f"Error: run_manifest.json 生成失败: {error}", file=sys.stderr)
         return 1
 
-    print(f"Pipeline complete in {elapsed:.2f}s")
+    print(f"通信链路完成，用时 {elapsed:.2f}s")
     print(f"  SNR: {args.snr} dB, Seed: {args.seed}")
     print(f"  BER: {metrics['ber']:.6f}, FER: {metrics['fer']:.1f}")
     print(f"  Predecode BER: {metrics['predecode_ber']:.6f}")

@@ -93,6 +93,13 @@ def test_awgn_reproducible():
     assert np.allclose(np.array(out1), np.array(out2))
 
 
+@pytest.mark.parametrize("snr_db", [float("nan"), float("inf"), -float("inf"), -9999.0, 9999.0])
+def test_awgn_rejects_invalid_snr(snr_db):
+    syms = [1 + 0j, -1 + 0j]
+    with pytest.raises(ValueError, match="SNR"):
+        awgn(syms, snr_db=snr_db, seed=2026)
+
+
 def test_sync_25_offset():
     text = "无线通信测试同步"
     seed = 2026
@@ -195,6 +202,7 @@ def test_pipeline_rejects_length_mismatch_before_channel_decode(monkeypatch):
         raise AssertionError("channel_decode called for invalid coded length")
 
     monkeypatch.setattr("src.pipeline.parse_frame", fake_parse_frame)
+    monkeypatch.setattr("src.pipeline._candidate_original_lengths", lambda _n: [])
     monkeypatch.setattr("src.pipeline.channel_decode", decoder_must_not_run)
 
     try:

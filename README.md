@@ -65,7 +65,7 @@ results/received.txt
 results/metrics.json
 ```
 
-并至少生成以下图表中的两项：
+AWGN 默认模式应生成以下三张图表：
 
 ```text
 results/constellation.png
@@ -90,7 +90,7 @@ pytest public_tests -q
 - 源编码、帧结构、扰码或加密、信道编码、QPSK、AWGN、同步等模块是否满足基本要求
 - `results/received.txt` 和 `results/metrics.json` 是否生成
 - `metrics.json` 字段是否完整
-- 是否生成至少两张结果图
+- 是否生成结果图
 - 是否存在明显绕过无线链路的直接复制行为
 
 ## 隐藏验证
@@ -135,8 +135,9 @@ pytest public_tests -q
 python main.py --input Test.txt --output results/received.txt --snr 12 --seed 2026 --mod qpsk --channel awgn
 ```
 
-成功运行后，输出目录应包含 `received.txt`、`metrics.json`、至少两张有效
-PNG 图表，以及 `run_manifest.json`。`run_manifest.json` 记录本次命令行、UTC
+成功运行后，AWGN 默认模式的输出目录应包含 `received.txt`、`metrics.json`、
+三张有效 PNG 图表（`constellation.png`、`ber_curve.png`、`sync_peak.png`），
+以及 `run_manifest.json`。`run_manifest.json` 记录本次命令行、UTC
 时间、可用时的 Git commit 和工作区 dirty 状态、Python/平台信息、依赖版本、输入
 和输出 SHA-256、运行时间、seed、SNR、调制方式、信道类型和生成文件清单。
 如果 Git 不可用，或当前目录不是 Git 仓库，程序不会崩溃；Git 相关字段写为
@@ -161,6 +162,30 @@ PNG 图表，以及 `run_manifest.json`。`run_manifest.json` 记录本次命令
 `frame_error_indicator` 是单次运行的帧错误指示：`0` 表示该帧完整恢复，
 `1` 表示该帧恢复失败。单次运行不能把它解释为稳定 FER；在 Level 3 多 seed
 实验中，该指示量的均值才是有限样本 FER。
+
+CLI 对 `--snr` 采用集中校验：合法值必须是有限数，并位于 `[-100, 100]` dB
+范围内。`nan`、`inf`、`-inf`、`-9999` 和 `9999` 会在主流程开始前以非零
+退出码拒绝；正常负 SNR（例如 `-10` dB）仍允许运行。输入路径不存在、输入路径
+是目录、输出父路径不是目录或输出目录不可写时，CLI 会向 `stderr` 输出中文错误
+并返回非零退出码，不写出误导性的半成品。
+
+接收端帧解析保持旧帧格式兼容。发送端仍使用
+`Preamble | Original Length | Coded Length | Coded Payload | CRC-32`，
+未新增 OFDM、16-QAM 或多径功能。若直接解析因少量帧头硬判决错误失败，接收端会
+在严格边界内根据接收 frame bit 总长度、`coded_length == 3 * original_length`
+和 CRC 选择有限候选，并在 `metrics.json` 记录 `frame_parse_strategy`、
+`preamble_bit_errors`、`header_bit_errors`、`crc_bit_errors` 和
+`qpsk_padding_bits`。该过程不读取原始输入文本，不复制答案，也不把同步真值传给
+接收端。
+当 payload 恢复后重新计算的 CRC 与接收 CRC 字段仅差 1 bit 时，系统将其作为 CRC
+字段自身的单 bit 硬判决错误处理；`crc_bit_errors` 会记录该事实。超过 1 bit 或
+payload 本身错误仍会导致帧失败。
+
+`ber_curve.png` 现在使用每个 SNR 至少 20 个 seed 的 `predecode_ber` 均值绘制
+物理层 BER，并把 `predecode_ber` 的均值、标准差、最小值、最大值、端到端 FER、
+CRC 通过率和完整恢复率保存到 `ber_curve_data.json`。理论 Gray QPSK 曲线只作为
+同口径物理层硬判决 BER 参考；端到端失败率单独以 FER 展示，不再与 `payload_ber`
+混用。
 
 一键验收命令：
 

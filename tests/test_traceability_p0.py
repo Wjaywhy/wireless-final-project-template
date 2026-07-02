@@ -88,7 +88,7 @@ def test_low_snr_predecode_and_payload_ber_can_differ(tmp_path):
     )
 
     assert 0.0 <= metrics["predecode_ber"] <= 1.0
-    assert metrics["payload_ber"] == 1.0
+    assert 0.0 <= metrics["payload_ber"] <= 1.0
     assert metrics["predecode_ber"] != metrics["payload_ber"]
     assert metrics["ber"] == metrics["payload_ber"]
 
@@ -106,8 +106,9 @@ def test_frame_parse_failure_keeps_predecode_ber(monkeypatch, tmp_path):
     )
 
     assert metrics["predecode_ber"] == 0.0
-    assert metrics["payload_ber"] == 1.0
-    assert metrics["frame_error_indicator"] == 1
+    assert metrics["payload_ber"] == 0.0
+    assert metrics["frame_error_indicator"] == 0
+    assert metrics["frame_parse_strategy"] == "length_crc_candidate"
 
 
 def _set_cli_argv(monkeypatch, input_path: Path, output_path: Path) -> None:
@@ -148,16 +149,17 @@ def test_cli_rejects_empty_png_as_invalid(monkeypatch, tmp_path):
     assert cli_main.main() == 1
 
 
-def test_cli_accepts_at_least_two_valid_plots(monkeypatch, tmp_path):
-    input_path = _write_input(tmp_path, "two plots")
+def test_cli_accepts_all_expected_awgn_plots(monkeypatch, tmp_path):
+    input_path = _write_input(tmp_path, "three plots")
     output_path = tmp_path / "received.txt"
     _set_cli_argv(monkeypatch, input_path, output_path)
 
-    def write_two_plots(*_args, **kwargs):
+    def write_three_plots(*_args, **kwargs):
         directory = Path(kwargs["output_dir"])
         (directory / "constellation.png").write_bytes(b"valid")
         (directory / "ber_curve.png").write_bytes(b"valid")
+        (directory / "sync_peak.png").write_bytes(b"valid")
 
-    monkeypatch.setattr(cli_main, "generate_all_plots", write_two_plots)
+    monkeypatch.setattr(cli_main, "generate_all_plots", write_three_plots)
     assert cli_main.main() == 0
     assert (tmp_path / "run_manifest.json").exists()

@@ -347,7 +347,7 @@ python main.py --input Test.txt --output results/received.txt --snr 12 --seed 20
 | `results/received.txt` | 接收端恢复的 UTF-8 文本 |
 | `results/metrics.json` | 性能指标 JSON |
 | `results/constellation.png` | 接收端 QPSK 星座图 |
-| `results/ber_curve.png` | BER-SNR 曲线 |
+| `results/ber_curve.png` | 基于多 seed `predecode_ber` 均值的 BER-SNR 曲线，同时展示端到端 FER |
 | `results/sync_peak.png` | 同步相关峰值图 |
 
 ## 指标 (`results/metrics.json`)
@@ -424,7 +424,7 @@ NumPy 整数和浮点数类型不能直接 JSON 序列化。输出前需将 `np.
 |---|---|
 | `Test.txt` 不存在 | 打印错误信息并 `sys.exit(1)` |
 | 接收 bitstream 长度非法或 UTF-8 严格解码失败 | `source_decode()` 直接调用时分别抛出 `ValueError` 或 `UnicodeDecodeError`；端到端管线先检查 bit 长度，长度非法时跳过解码，长度合法但 UTF-8 解码异常时捕获异常。两条路径都将恢复文本安全置空、写出 `received.txt`，并继续输出失败指标，不因低 SNR 数据损坏而退出 |
-| SNR 参数为非数值 | argparse 自动校验 |
+| SNR 参数为 `nan`、`inf`、`-inf` 或超出 `[-100, 100]` dB | CLI 在主流程前返回非零；信道函数内部仍调用同一校验函数防御直接调用 |
 | `--mod` 参数值不支持 | 打印支持列表并 `sys.exit(1)` |
 
 ## 测试追踪矩阵
@@ -768,7 +768,7 @@ Git 查询失败不会导致核心流程崩溃，Git 字段用 `null` 表示。
 ### 图表交付契约
 
 CLI 在绘图后检查图表文件。AWGN 模式预期生成 `constellation.png`、
-`ber_curve.png` 和 `sync_peak.png`，至少两张非空 PNG 有效才视为交付成功。
+`ber_curve.png` 和 `sync_peak.png`，三张非空 PNG 全部有效才视为交付成功。
 Rayleigh 单次 CLI 只检查其实际承诺的 `constellation.png` 和 `sync_peak.png`。
 绘图异常、文件缺失或空文件都会导致 CLI 非零退出。
 
@@ -783,3 +783,62 @@ Rayleigh 单次 CLI 只检查其实际承诺的 `constellation.png` 和 `sync_pe
 所有曲线都是有限样本仿真摘要。它们只能支持“本次有限传输中未观察到误码”
 或“BER 低于当前实验检测分辨率”等表述，不能证明真实 BER 等于 0，也不能证明
 固定理论 MRC dB 增益。
+
+## 2026-07-03 审计修订
+
+本节记录当前实现相对于历史设计说明的约束更新，作为最新口径。
+
+### SNR 合法范围
+
+`--snr` 由 `src/config.py` 集中定义合法范围：`MIN_SNR_DB = -100.0`，
+`MAX_SNR_DB = 100.0`。CLI 在进入通信链路前拒绝 `nan`、`inf`、`-inf`
+以及超出该范围的有限值；`src/channel.py::awgn` 和
+`src/channel.py::rayleigh_flat_fading` 也调用同一校验函数，防止绕过 CLI
+直接调用时出现噪声功率上溢、下溢或非有限浮点数。正常负 SNR，例如 `-10` dB，
+仍属于合法压力测试。
+
+### 输出路径错误处理
+
+CLI 在运行主链路前检查输入文件是否存在且为普通文件、输出路径本身是否为目录、
+输出父目录能否创建以及是否可写。路径错误统一写入 `stderr` 并返回非零退出码；
+这类用户输入错误不打印 Python traceback，也不会写出 `metrics.json`、PNG 或
+`run_manifest.json` 半成品。
+
+### 帧头兼容候选解析
+
+发送帧格式保持不变：
+
+```text
+Preamble | Original Length | Coded Length | Coded Payload | CRC-32
+```
+
+直接解析失败或 CRC 不通过时，接收端会基于解调后的 frame bit 总长度、
+`original_length` 必须为 UTF-8 字节 bit 数、`coded_length == 3 * original_length`
+和 CRC 后验校验构造有限候选。候选数量由 QPSK 尾部最多 1 bit padding 限定，不做
+指数搜索，不读取原始输入文本，不使用真实同步偏移。候选路径的证据写入
+`metrics.json`：`frame_parse_strategy`、`preamble_bit_errors`、
+`header_bit_errors`、`crc_bit_errors` 和 `qpsk_padding_bits`。
+若 payload 恢复后重新计算的 CRC 与接收 CRC 字段仅差 1 bit，系统将其视为 CRC
+字段自身的单 bit 硬判决错误并接受；差异超过 1 bit 仍判定失败。该规则只纠正 CRC
+字段，不纠正 payload，也不允许 payload 错误绕过 CRC。
+
+### BER 曲线统计口径
+
+`ber_curve.png` 使用每个 SNR 20 个 trial seed 的 `predecode_ber` 均值作为物理层
+BER。`ber_curve_data.json` 保存每个 SNR 的 `num_trials`、均值、标准差、最小值、
+最大值、FER 均值、CRC 通过率、完整恢复率和 trial seed 列表。理论 Gray QPSK
+曲线只作为同步后硬判决物理层 BER 的参考，不与端到端 `payload_ber` 混用。端到端
+失败率通过 FER 轴和 JSON 数据单独呈现。
+
+### 图像交付契约
+
+AWGN 默认 CLI 成功返回的条件是三张图
+`constellation.png`、`ber_curve.png`、`sync_peak.png` 均存在且非空。Rayleigh
+单次 CLI 只检查其承诺的 `constellation.png` 和 `sync_peak.png`。绘图异常、
+缺失文件或空文件会导致非零退出码。
+
+### 字节级文本恢复
+
+`run_pipeline()` 以 `newline=""` 读取和写入文本，避免 Windows 将 `\n` 自动改写为
+`\r\n`。因此 `received.txt` 可以在换行、制表符、BOM、空字符和 emoji 等场景下与
+输入文件进行 SHA-256 或逐字节比较。

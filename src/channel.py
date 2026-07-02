@@ -10,6 +10,8 @@ entire transmitted frame.
 
 import numpy as np
 
+from src.config import validate_snr_db
+
 
 def awgn(symbols: list[complex], snr_db: float, seed: int = 2026) -> list[complex]:
     """Add circularly-symmetric complex AWGN to a symbol sequence.
@@ -27,13 +29,18 @@ def awgn(symbols: list[complex], snr_db: float, seed: int = 2026) -> list[comple
     Returns:
         Noisy symbols, same length as the input.
     """
+    snr_db = validate_snr_db(snr_db)
     if len(symbols) == 0:
         return []
     syms = np.array([complex(s) for s in symbols])
     E_s = np.mean(np.abs(syms) ** 2)
+    if not np.isfinite(E_s) or E_s < 0:
+        raise ValueError("transmitted symbol power must be finite and non-negative")
     if E_s == 0:
         return list(syms)
     N0 = E_s / (10.0 ** (snr_db / 10.0))
+    if not np.isfinite(N0) or N0 < 0:
+        raise ValueError("noise power is not finite; check SNR range")
     noise_std = np.sqrt(N0 / 2.0)
     rng = np.random.default_rng(seed)
     noise = (rng.normal(0.0, noise_std, len(syms))
@@ -80,8 +87,7 @@ def rayleigh_flat_fading(
         raise ValueError(
             f"diversity_order must be 1 or 2, got {diversity_order}"
         )
-    if not np.isfinite(snr_db):
-        raise ValueError(f"snr_db must be finite, got {snr_db}")
+    snr_db = validate_snr_db(snr_db)
 
     syms = np.asarray(symbols, dtype=np.complex128).reshape(-1)
     root = seed if isinstance(seed, np.random.SeedSequence) else \
@@ -105,6 +111,8 @@ def rayleigh_flat_fading(
     if not np.isfinite(symbol_power) or symbol_power < 0:
         raise ValueError("transmitted symbol power must be finite and non-negative")
     noise_variance = symbol_power / (10.0 ** (float(snr_db) / 10.0))
+    if not np.isfinite(noise_variance) or noise_variance < 0:
+        raise ValueError("noise power is not finite; check SNR range")
     noise_std = np.sqrt(noise_variance / 2.0)
 
     received = np.empty(

@@ -15,6 +15,34 @@ is the number of preamble symbols.
 import numpy as np
 
 
+def _normalised_correlation_trace(
+        received_symbols: list[complex] | np.ndarray,
+        preamble: list[complex] | np.ndarray) -> np.ndarray:
+    """用矢量化方式计算归一化滑动互相关幅度。"""
+    r = np.asarray(received_symbols, dtype=np.complex128).reshape(-1)
+    p = np.asarray(preamble, dtype=np.complex128).reshape(-1)
+    L = len(p)
+    N = len(r)
+    if N < L or L == 0:
+        return np.array([], dtype=float)
+
+    p_power = float(np.sum(np.abs(p) ** 2))
+    if p_power == 0.0:
+        return np.array([], dtype=float)
+
+    numerator = np.abs(np.correlate(r, p, mode="valid"))
+    power = np.abs(r) ** 2
+    prefix = np.concatenate(([0.0], np.cumsum(power, dtype=float)))
+    window_power = prefix[L:] - prefix[:-L]
+    denominator = np.sqrt(window_power * p_power)
+    return np.divide(
+        numerator,
+        denominator,
+        out=np.zeros_like(numerator, dtype=float),
+        where=denominator > 0,
+    )
+
+
 def synchronize(received_symbols: list[complex],
                 preamble: list[complex]) -> int:
     """Return the best frame-start index using normalised cross-correlation.
@@ -26,31 +54,10 @@ def synchronize(received_symbols: list[complex],
     Returns:
         Sample index where the correlation peaks.
     """
-    r = np.array([complex(s) for s in received_symbols])
-    p = np.array([complex(s) for s in preamble])
-    L = len(p)
-    N = len(r)
-
-    if N < L:
+    corr_values = _normalised_correlation_trace(received_symbols, preamble)
+    if corr_values.size == 0:
         return 0
-
-    p_power = np.sum(np.abs(p) ** 2)
-    if p_power == 0:
-        return 0
-
-    best_idx = 0
-    best_corr = -1.0
-
-    for k in range(N - L + 1):
-        window = r[k:k + L]
-        num = np.abs(np.sum(window * np.conj(p)))
-        den = np.sqrt(np.sum(np.abs(window) ** 2) * p_power)
-        corr = num / den if den > 0 else 0.0
-        if corr > best_corr:
-            best_corr = corr
-            best_idx = k
-
-    return best_idx
+    return int(np.argmax(corr_values))
 
 
 def synchronize_with_correlation(
@@ -66,33 +73,11 @@ def synchronize_with_correlation(
         ``(best_index, correlation_values)`` where *correlation_values* is a
         list of normalised correlation magnitudes (one per window position).
     """
-    r = np.array([complex(s) for s in received_symbols])
-    p = np.array([complex(s) for s in preamble])
-    L = len(p)
-    N = len(r)
-
-    if N < L:
+    corr_values = _normalised_correlation_trace(received_symbols, preamble)
+    if corr_values.size == 0:
         return 0, []
-
-    p_power = float(np.sum(np.abs(p) ** 2))
-    if p_power == 0:
-        return 0, []
-
-    best_idx = 0
-    best_corr = -1.0
-    corr_values = []
-
-    for k in range(N - L + 1):
-        window = r[k:k + L]
-        num = float(np.abs(np.sum(window * np.conj(p))))
-        den = np.sqrt(float(np.sum(np.abs(window) ** 2)) * p_power)
-        corr = num / den if den > 0 else 0.0
-        corr_values.append(corr)
-        if corr > best_corr:
-            best_corr = corr
-            best_idx = k
-
-    return best_idx, corr_values
+    best_idx = int(np.argmax(corr_values))
+    return best_idx, corr_values.tolist()
 
 
 def synchronize_branches(

@@ -21,6 +21,7 @@ from src.channel_coding import channel_encode, channel_decode
 from src.framing import build_frame, parse_frame, _PREAMBLE_BITS, _compute_crc32
 from src.modulation import qpsk_modulate, qpsk_demodulate
 from src.channel import awgn, rayleigh_flat_fading
+from src.config import validate_snr_db
 from src.synchronization import (
     synchronize_with_correlation,
     synchronize_branches,
@@ -37,6 +38,10 @@ from src.metrics import calculate_ber
 #: Pre-computed preamble complex symbols (32 QPSK symbols from 64 preamble bits).
 PREAMBLE_SYMBOLS = qpsk_modulate(list(_PREAMBLE_BITS))
 
+MAX_PREAMBLE_BIT_ERRORS = 2
+MAX_HEADER_FIELD_BIT_ERRORS = 4
+MAX_CRC_FIELD_BIT_ERRORS = 1
+
 
 def _bits_to_int_be(bits: list[int]) -> int:
     """Decode a big-endian bit list to an unsigned integer.
@@ -48,6 +53,187 @@ def _bits_to_int_be(bits: list[int]) -> int:
     for bit in bits:
         value = (value << 1) | int(bit)
     return value
+
+
+def _int_to_bits_be(value: int, width: int) -> list[int]:
+    """把非负整数编码成指定宽度的大端比特。"""
+    return [(value >> bit) & 1 for bit in range(width - 1, -1, -1)]
+
+
+def _hamming_distance(left: list[int], right: list[int]) -> int:
+    """计算等长比特序列的汉明距离。"""
+    return sum(int(a) != int(b) for a, b in zip(left, right))
+
+
+def _candidate_original_lengths(bit_count: int) -> list[int]:
+    """从接收帧总长度推断有限个合法原始长度候选。
+
+    当前 CLI 输入来自 UTF-8 文本，因此原始 payload bit 数应为 8 的倍数；
+    QPSK 调制最多只会在帧尾补 1 个 bit。该函数只使用接收端可见的
+    解调比特长度和固定帧结构，不读取原始文本。
+    """
+    candidates = set()
+    for qpsk_padding_bits in (0, 1):
+        coded_length = bit_count - 64 - 32 - 32 - 32 - qpsk_padding_bits
+        if coded_length < 0 or coded_length % 3 != 0:
+            continue
+        original_length = coded_length // 3
+        if original_length >= 0 and original_length % 8 == 0:
+            candidates.add(int(original_length))
+    return sorted(candidates)
+
+
+def _parsed_from_candidate(bits: list[int],
+                           original_length: int,
+                           strategy: str) -> dict | None:
+    """按候选原始长度构造帧字段，并记录控制字段误差。"""
+    coded_length = 3 * int(original_length)
+    crc_start = 64 + 32 + 32 + coded_length
+    crc_end = crc_start + 32
+    padding_bits = len(bits) - crc_end
+    if original_length < 0 or padding_bits not in (0, 1):
+        return None
+    if len(bits) < crc_end:
+        return None
+
+    preamble = [int(bit) for bit in bits[:64]]
+    original_header = [int(bit) for bit in bits[64:96]]
+    coded_header = [int(bit) for bit in bits[96:128]]
+    coded_payload = [int(bit) for bit in bits[128:crc_start]]
+    crc_received = [int(bit) for bit in bits[crc_start:crc_end]]
+    expected_original = _int_to_bits_be(original_length, 32)
+    expected_coded = _int_to_bits_be(coded_length, 32)
+
+    return {
+        "preamble": preamble,
+        "original_length": int(original_length),
+        "coded_length": int(coded_length),
+        "payload": coded_payload,
+        "coded_payload": coded_payload,
+        "crc_received": crc_received,
+        "length": int(original_length),
+        "frame_parse_strategy": strategy,
+        "preamble_bit_errors": _hamming_distance(
+            preamble, list(_PREAMBLE_BITS)
+        ),
+        "header_bit_errors": _hamming_distance(
+            original_header, expected_original
+        ) + _hamming_distance(coded_header, expected_coded),
+        "qpsk_padding_bits": int(padding_bits),
+    }
+
+
+def _evaluate_parsed_frame(parsed: dict, seed: int) -> dict:
+    """对一个候选帧执行译码、解扰和 CRC 评估。"""
+    original_length = int(parsed["original_length"])
+    coded_length = int(parsed["coded_length"])
+    coded_payload = [int(bit) for bit in parsed["coded_payload"]]
+    encoded_length_ok = (
+        coded_length == 3 * original_length
+        and coded_length % 3 == 0
+        and len(coded_payload) == coded_length
+    )
+    decoded = []
+    descrambled = []
+    decode_error = ""
+    if encoded_length_ok and coded_length > 0:
+        try:
+            decoded = channel_decode(coded_payload)
+            descrambled = descramble(decoded, seed)
+        except ValueError as error:
+            decode_error = str(error)
+    elif encoded_length_ok and coded_length == 0:
+        descrambled = []
+
+    length_ok = encoded_length_ok and len(descrambled) == original_length
+    crc_expected = _int_to_bits_be(_compute_crc32(descrambled), 32) \
+        if length_ok else [0] * 32
+    crc_bit_errors = _hamming_distance(
+        [int(bit) for bit in parsed["crc_received"]], crc_expected
+    )
+    checksum_pass = (
+        length_ok
+        and parsed.get("preamble_bit_errors", 0) <= MAX_PREAMBLE_BIT_ERRORS
+        and parsed.get("header_bit_errors", 0) <= MAX_HEADER_FIELD_BIT_ERRORS
+        and crc_bit_errors <= MAX_CRC_FIELD_BIT_ERRORS
+    )
+    return {
+        "parsed": parsed,
+        "encoded_length_ok": bool(encoded_length_ok),
+        "decoded": decoded,
+        "descrambled": descrambled,
+        "length_ok": bool(length_ok),
+        "crc_bit_errors": int(crc_bit_errors),
+        "checksum_pass": bool(checksum_pass),
+        "decode_error": decode_error,
+    }
+
+
+def _recover_frame_fields(demod_bits: list[int], seed: int) -> dict:
+    """用直接解析和有限候选搜索恢复帧字段。
+
+    候选搜索只在直接解析失败或 CRC 不通过时作为兼容后备，不依赖发送端
+    原始文本。排序优先级为 CRC、控制字段误差和是否直接解析。
+    """
+    bits = [int(bit) for bit in demod_bits]
+    evaluated = []
+
+    try:
+        parsed = parse_frame(bits, preamble=list(_PREAMBLE_BITS))
+        parsed["frame_parse_strategy"] = "direct"
+        parsed["preamble_bit_errors"] = 0
+        parsed["header_bit_errors"] = 0
+        parsed["qpsk_padding_bits"] = max(
+            0,
+            len(bits) - (64 + 32 + 32 + int(parsed["coded_length"]) + 32),
+        )
+        evaluated.append(_evaluate_parsed_frame(parsed, seed))
+    except (ValueError, IndexError):
+        pass
+
+    for original_length in _candidate_original_lengths(len(bits)):
+        parsed = _parsed_from_candidate(bits, original_length, "length_crc_candidate")
+        if parsed is not None:
+            evaluated.append(_evaluate_parsed_frame(parsed, seed))
+
+    if not evaluated:
+        fallback = {
+            "preamble": [],
+            "original_length": 0,
+            "coded_length": 0,
+            "payload": [],
+            "coded_payload": [],
+            "crc_received": [0] * 32,
+            "length": 0,
+            "frame_parse_strategy": "failed",
+            "preamble_bit_errors": None,
+            "header_bit_errors": None,
+            "qpsk_padding_bits": None,
+        }
+        return {
+            "parsed": fallback,
+            "encoded_length_ok": False,
+            "decoded": [],
+            "descrambled": [],
+            "length_ok": False,
+            "crc_bit_errors": None,
+            "checksum_pass": False,
+            "decode_error": "no valid frame candidate",
+        }
+
+    def sort_key(entry: dict) -> tuple:
+        parsed = entry["parsed"]
+        header_errors = parsed.get("header_bit_errors")
+        preamble_errors = parsed.get("preamble_bit_errors")
+        return (
+            0 if entry["checksum_pass"] else 1,
+            entry["crc_bit_errors"] if entry["crc_bit_errors"] is not None else 99,
+            header_errors if header_errors is not None else 99,
+            preamble_errors if preamble_errors is not None else 99,
+            0 if parsed.get("frame_parse_strategy") == "direct" else 1,
+        )
+
+    return sorted(evaluated, key=sort_key)[0]
 
 
 def _generate_prefix_symbols(n: int, seed: int) -> list[complex]:
@@ -108,6 +294,7 @@ def run_pipeline(input_path: str, output_path: str,
     branch, or complex-symbol ordinary MRC for two branches.  True channel
     values remain simulation-only diagnostics.
     """
+    snr_db = validate_snr_db(snr_db)
     if modulation != "qpsk":
         raise ValueError(
             f"Unsupported modulation: {modulation}. Only 'qpsk' is supported."
@@ -120,7 +307,7 @@ def run_pipeline(input_path: str, output_path: str,
     if not os.path.exists(input_path):
         raise FileNotFoundError(f"Input file not found: {input_path}")
 
-    with open(input_path, "r", encoding="utf-8") as file:
+    with open(input_path, "r", encoding="utf-8", newline="") as file:
         original_text = file.read()
 
     original_bits = source_encode(original_text)
@@ -224,45 +411,13 @@ def run_pipeline(input_path: str, output_path: str,
     # ignored; missing frame bits are counted as errors by calculate_ber().
     predecode_ber = calculate_ber(frame_bits, demod_bits[:len(frame_bits)])
     payload_bits = len(original_bits)
-    try:
-        parsed = parse_frame(demod_bits, preamble=list(_PREAMBLE_BITS))
-        frame_ok = True
-    except (ValueError, IndexError):
-        frame_ok = False
-        parsed = {
-            "original_length": 0,
-            "coded_length": 0,
-            "coded_payload": [],
-            "crc_received": [0] * 32,
-        }
-
-    # ─── Length verification (triple-repetition code invariant) ───
+    recovery = _recover_frame_fields(demod_bits, seed)
+    parsed = recovery["parsed"]
     original_length = parsed["original_length"]
     coded_length = parsed["coded_length"]
-    coded_payload = parsed["coded_payload"]
-    # R = 1/3: coded must be exactly 3× original, and divisible by 3
-    encoded_length_ok = (
-        frame_ok
-        and coded_length == 3 * original_length
-        and coded_length % 3 == 0
-        and len(coded_payload) == coded_length
-    )
-    decoded = channel_decode(coded_payload) \
-        if encoded_length_ok and coded_length > 0 else []
-    descrambled = descramble(decoded, seed) if decoded else []
-    # After descrambling, recovered bit count must match the original length
-    length_ok = encoded_length_ok and len(descrambled) == original_length
-
-    # ─── CRC-32 verification (computed on RECEIVED descrambled bits) ───
-    # Per DESIGN.md §接收端流程: the receiver MUST re-compute CRC from the
-    # recovered descrambled bitstream, not from the transmitter's original.
-    crc_ok = False
-    if frame_ok and length_ok:
-        crc_ok = (
-            _bits_to_int_be(parsed["crc_received"])
-            == _compute_crc32(descrambled)
-        )
-    checksum_pass = bool(crc_ok)
+    descrambled = recovery["descrambled"]
+    length_ok = recovery["length_ok"]
+    checksum_pass = bool(recovery["checksum_pass"])
     # Frame error: any failure in the chain → FER = 1.0
     fer = 0.0 if checksum_pass else 1.0
 
@@ -273,7 +428,7 @@ def run_pipeline(input_path: str, output_path: str,
         except (ValueError, UnicodeDecodeError):
             recovered_text = ""
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as file:
+    with open(output_path, "w", encoding="utf-8", newline="") as file:
         file.write(recovered_text)
 
     payload_ber = calculate_ber(original_bits, descrambled)
@@ -309,6 +464,11 @@ def run_pipeline(input_path: str, output_path: str,
         "sync_start_index": int(sync_start),
         "sync_error_symbols": int(sync_error_symbols),
         "sync_success": sync_success,
+        "frame_parse_strategy": str(parsed.get("frame_parse_strategy", "unknown")),
+        "preamble_bit_errors": parsed.get("preamble_bit_errors"),
+        "header_bit_errors": parsed.get("header_bit_errors"),
+        "crc_bit_errors": recovery.get("crc_bit_errors"),
+        "qpsk_padding_bits": parsed.get("qpsk_padding_bits"),
         "_rx_symbols": rx_symbols,
         "_sync_start": sync_start,
         "_corr_values": corr_values,

@@ -69,6 +69,8 @@ def save_metrics(metrics: dict, output_dir: str):
         "frame_error_indicator", "text_match_rate", "checksum_pass",
         "true_prefix_symbols", "sync_start_index", "sync_error_symbols",
         "sync_success",
+        "frame_parse_strategy", "preamble_bit_errors", "header_bit_errors",
+        "crc_bit_errors", "qpsk_padding_bits",
         "fading_model", "equalizer", "requested_equalizer",
         "diversity_order", "channel_estimate_real", "channel_estimate_imag",
         "channel_estimate_magnitude", "channel_estimate_phase_rad",
