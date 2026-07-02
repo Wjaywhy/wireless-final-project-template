@@ -5,8 +5,14 @@
   "channel": "awgn",
   "payload_bits": 5376,
   "ber": 0.0,
+  "payload_ber": 0.0,
+  "predecode_ber": 6.13949e-05,
   "fer": 0.0,
+  "frame_error_indicator": 0,
   "text_match_rate": 1.0,
   "checksum_pass": true,
-  "sync_start_index": 109
+  "true_prefix_symbols": 109,
+  "sync_start_index": 109,
+  "sync_error_symbols": 0,
+  "sync_success": true
 }

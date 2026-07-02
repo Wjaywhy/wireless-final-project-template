@@ -466,3 +466,41 @@ python -m src.level3 --input Test.txt --output-dir results --seed 2026
 - **保留：** AI 生成的 Rayleigh 模型、LS 估计、ZF/MMSE/MRC 公式实现、多分支同步、SeedSequence 子流方案、CLI 参数设计、实验脚本结构
 - **修改：** AWGN 分支随机流保留原方案（防止 Level 2 回归退化）、MRC metrics 中 `equalizer` 字段强制为 `"mrc"`、`noise_variance` 类型持久化
 - **拒绝：** 无。AI 生成代码经人工审查后全部采纳或经小幅修正后采纳
+## 2026-07 Codex 审计与追溯更新
+
+Prompt 摘要：
+
+- 修改前先阅读 `PRD.md`、既有文档、`main.py`、`src/` 下全部核心模块、
+  `tests/` 和 `public_tests/`、当前结果文件与实验脚本。
+- 保留既有统一 CLI、QPSK Gray 映射、三重复码、帧结构、CRC-32、默认 AWGN
+  行为，以及 Level 3 的 Rayleigh、ZF、MMSE 和 MRC 算法。
+- 增加可复现性、追溯性、指标严谨性、CLI 交付物一致性，以及文档/测试/结果
+  之间的证据闭环。
+
+经代码审查后采纳的 AI 辅助修改：
+
+- 新增 `src/manifest.py`，用于生成 `run_manifest.json`。
+- 新增公开同步审计字段，但不把真实前缀数传给接收端同步算法。
+- 将物理层 `predecode_ber` 与端到端 `payload_ber` 分离；旧字段保持
+  `ber = payload_ber`。
+- 新增单次运行的 `frame_error_indicator`。
+- CLI 在图表交付失败时返回非零，并报告预期图表、有效图表、缺失或无效图表。
+- Level 3 新增可配置 `--seed-count`，并报告离散度和计数字段。
+- 新增 `TRACEABILITY.md` 和 `scripts/verify_submission.py`。
+- 在 `requirements.txt` 中写入兼容版本范围，在 `requirements-lock.txt` 中记录
+  精确版本。
+
+人工约束：
+
+- 未新增 OFDM、16-QAM、多径信道或新调制功能。
+- 未重写同步算法、帧结构、CRC、QPSK 映射或信道编码算法。
+- 未通过筛选 seed 改善曲线。
+- Rayleigh 模式接收端仍使用前导 LS 估计；仿真真实信道值仅作为诊断字段。
+- 未加入直接复制输入到输出的捷径。
+- 默认 `main.py` 不运行 Level 3 多 seed 扫描。
+
+拒绝或避免的修改：
+
+- 不用有限实验声称真实 BER 为 0。
+- 不从当前默认 5 seed 实验声称固定理论 MRC dB 增益。
+- 避免重写已有历史文档的大段内容；只补充 2026-07 审计段落。

@@ -219,6 +219,10 @@ def run_pipeline(input_path: str, output_path: str,
 
     # ─── QPSK demodulation and frame parsing ───
     demod_bits = qpsk_demodulate(receiver_symbols)
+    # Physical-layer hard-decision BER after synchronization and QPSK
+    # demodulation. Extra demodulated bits after the transmitted frame are
+    # ignored; missing frame bits are counted as errors by calculate_ber().
+    predecode_ber = calculate_ber(frame_bits, demod_bits[:len(frame_bits)])
     payload_bits = len(original_bits)
     try:
         parsed = parse_frame(demod_bits, preamble=list(_PREAMBLE_BITS))
@@ -272,7 +276,8 @@ def run_pipeline(input_path: str, output_path: str,
     with open(output_path, "w", encoding="utf-8") as file:
         file.write(recovered_text)
 
-    ber = calculate_ber(original_bits, descrambled)
+    payload_ber = calculate_ber(original_bits, descrambled)
+    frame_error_indicator = 0 if checksum_pass else 1
     max_chars = max(len(original_text), len(recovered_text))
     if max_chars:
         matches = sum(
@@ -284,17 +289,26 @@ def run_pipeline(input_path: str, output_path: str,
     else:
         text_match_rate = 1.0
 
+    sync_error_symbols = int(sync_start) - int(n_prefix)
+    sync_success = bool(abs(sync_error_symbols) <= 1)
+
     metrics = {
         "snr_db": float(snr_db),
         "seed": int(seed),
         "modulation": str(modulation),
         "channel": str(channel),
         "payload_bits": int(payload_bits),
-        "ber": float(round(ber, 10)),
+        "ber": float(round(payload_ber, 10)),
+        "payload_ber": float(round(payload_ber, 10)),
+        "predecode_ber": float(round(predecode_ber, 10)),
         "fer": float(fer),
+        "frame_error_indicator": int(frame_error_indicator),
         "text_match_rate": float(round(text_match_rate, 10)),
         "checksum_pass": bool(checksum_pass),
+        "true_prefix_symbols": int(n_prefix),
         "sync_start_index": int(sync_start),
+        "sync_error_symbols": int(sync_error_symbols),
+        "sync_success": sync_success,
         "_rx_symbols": rx_symbols,
         "_sync_start": sync_start,
         "_corr_values": corr_values,
@@ -316,7 +330,6 @@ def run_pipeline(input_path: str, output_path: str,
                 float(np.mean(errors)) if errors.size else None
             ),
             "noise_variance": float(noise_variance),
-            "sync_success": bool(abs(sync_start - n_prefix) <= 1),
             "failure_reason": receiver_failure_reason,
             "_channel_estimates": channel_estimates,
             "_true_channel": true_channel,

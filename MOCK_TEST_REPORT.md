@@ -383,3 +383,34 @@ pytest tests/test_level3_mock_prototype.py -q
 | 多 seed 实验 4 方案 × 6 SNR × 5 seed 完整运行 | ✅ |
 
 核心模块接口稳定，CRC/FER 逻辑正确，帧校验完整，CLI 参数验证完备。Level 3 Rayleigh+ZF/MMSE/MRC 链路全部通过专项和端到端测试。项目可以提交。
+## 2026-07 审计更新
+
+本次更新没有增加 OFDM、16-QAM、多径信道或新的同步算法。修改范围仅围绕现有
+AWGN、Rayleigh、ZF、MMSE 和 MRC 实现，补充可复现性与审计检查。
+
+新增并验证的事项：
+
+- `src/manifest.py` 写出 `run_manifest.json`，记录命令、环境、可用时的 Git
+  状态、输入/输出 SHA-256、运行时间、seed、SNR、调制方式、信道类型和生成
+  文件清单。
+- `src/pipeline.py::run_pipeline` 公开同步审计字段：
+  `true_prefix_symbols`、`sync_start_index`、`sync_error_symbols` 和
+  `sync_success`。真实前缀数不被接收端读取。
+- 指标区分 `predecode_ber` 与 `payload_ber`；旧字段 `ber` 继续等于
+  `payload_ber`。
+- `frame_error_indicator` 是单次运行失败指示量。只有在多 seed 实验中取均值时，
+  才将其解释为有限样本 FER。
+- 当承诺图表缺失、为空或绘图函数抛出异常时，`main.py` 返回非零退出码。
+- `src.level3` 支持 `--seed-count`，保存每 seed 原始记录，并报告
+  `trial_count`、`std_ber`、`frame_error_count`、`complete_recovery_rate` 和
+  `sync_success_rate`。
+- `TRACEABILITY.md` 将 PRD 面向的需求与设计、实现、测试和 CLI/结果证据相连。
+- `scripts/verify_submission.py` 重建证据链，并写出 `verification_report.json`。
+
+新增测试包括 `tests/test_traceability_p0.py` 以及 `tests/test_level3.py` 中的
+两个 Level 3 统计测试。这些测试均为增量测试；没有删除或削弱既有公开测试和
+内部测试断言。
+
+结果表述也已收紧：有限运行应表述为“本次有限传输中未观察到误码”或“BER 低于
+当前实验的检测分辨率”，不能作为真实 BER 为 0 的证明。MRC 对比是有限样本观察，
+不是固定理论 dB 增益结论。

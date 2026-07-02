@@ -65,13 +65,16 @@ def save_metrics(metrics: dict, output_dir: str):
     """
     public_fields = [
         "snr_db", "seed", "modulation", "channel", "payload_bits",
-        "ber", "fer", "text_match_rate", "checksum_pass", "sync_start_index",
+        "ber", "payload_ber", "predecode_ber", "fer",
+        "frame_error_indicator", "text_match_rate", "checksum_pass",
+        "true_prefix_symbols", "sync_start_index", "sync_error_symbols",
+        "sync_success",
         "fading_model", "equalizer", "requested_equalizer",
         "diversity_order", "channel_estimate_real", "channel_estimate_imag",
         "channel_estimate_magnitude", "channel_estimate_phase_rad",
         "channel_estimates_real", "channel_estimates_imag",
         "channel_estimates_magnitude", "channel_estimation_error",
-        "noise_variance", "sync_success", "failure_reason",
+        "noise_variance", "failure_reason",
         "simulation_only_true_channel_real",
         "simulation_only_true_channel_imag",
         "simulation_only_true_channels_real",

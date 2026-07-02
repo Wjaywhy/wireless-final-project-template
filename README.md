@@ -127,3 +127,63 @@ pytest public_tests -q
 ```text
 2023123456-张三-无线通信期末项目
 ```
+## 2026-07 可复现性与审计输出
+
+统一 CLI 保持向后兼容：
+
+```bash
+python main.py --input Test.txt --output results/received.txt --snr 12 --seed 2026 --mod qpsk --channel awgn
+```
+
+成功运行后，输出目录应包含 `received.txt`、`metrics.json`、至少两张有效
+PNG 图表，以及 `run_manifest.json`。`run_manifest.json` 记录本次命令行、UTC
+时间、可用时的 Git commit 和工作区 dirty 状态、Python/平台信息、依赖版本、输入
+和输出 SHA-256、运行时间、seed、SNR、调制方式、信道类型和生成文件清单。
+如果 Git 不可用，或当前目录不是 Git 仓库，程序不会崩溃；Git 相关字段写为
+`null`。
+
+`metrics.json` 保留旧字段 `ber`。为兼容旧测试，`ber` 等于 `payload_ber`，
+即经过帧解析、信道译码、解扰、CRC 检查和源解码后的端到端 payload BER。
+新增的 `predecode_ber` 在更早阶段计算：同步和 QPSK 硬判决解调后，用接收端
+原始 frame bits 与发送端 frame bits 在发送帧长度内比较。因此，后续帧解析失败
+或 UTF-8 解码失败不会把 `predecode_ber` 直接改写为 1.0。
+
+同步真值字段仅用于后验审计：
+
+- `true_prefix_symbols`：仿真中实际加入的随机前缀符号数。
+- `sync_start_index`：接收端同步算法检测到的帧起点。
+- `sync_error_symbols = sync_start_index - true_prefix_symbols`。
+- `sync_success = abs(sync_error_symbols) <= 1`。
+
+接收端同步算法不读取 `true_prefix_symbols`；该字段只在接收处理结束后写入，
+用于追溯同步误差。
+
+`frame_error_indicator` 是单次运行的帧错误指示：`0` 表示该帧完整恢复，
+`1` 表示该帧恢复失败。单次运行不能把它解释为稳定 FER；在 Level 3 多 seed
+实验中，该指示量的均值才是有限样本 FER。
+
+一键验收命令：
+
+```bash
+python scripts/verify_submission.py
+```
+
+该脚本会运行公开测试、内部测试、统一 CLI、文本 SHA-256 检查、metrics schema
+检查、manifest schema 检查、图表有效性检查和相同 seed 的可复现性检查。
+机器可读报告写入 `verification_report.json`。
+
+依赖文件的用途区分如下：
+
+- `requirements.txt`：兼容安装范围。
+- `requirements-lock.txt`：本次审计环境的精确版本。
+
+Level 3 实验支持可配置的有限 seed 数：
+
+```bash
+python -m src.level3 --input Test.txt --output-dir results/level3 --seed 2026 --seed-count 20
+```
+
+默认仍为 5 个 seed。结果是有限样本观测，不是理论曲线。报告中应使用
+“本次有限传输中未观察到误码”或“BER 低于当前实验的检测分辨率”等表述；
+不得据此声称真实 BER 为 0，也不得把当前样本下的 MRC 表现写成固定理论 dB
+增益。

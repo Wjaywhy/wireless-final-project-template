@@ -454,3 +454,46 @@ Mock 只允许在测试文件中定义局部数学原型，不创建完整 Rayle
 | v1.0 | 2026-06-24 | 初始测试计划，覆盖单元测试 49 条、mock 测试 7 条、集成测试 8 条 | PRD + DESIGN.md + public_tests 分析 |
 | v1.1 | 2026-06-24 | 更新测试状态为全部通过；补充最终审计结果 | 最终提交前审计 |
 | v2.0 | 2026-06-24 | 增加 Level 3 单元、最小 Mock、Level 2 回归、端到端、接口和多 seed 性能测试计划 | Level 3 测试计划 |
+## 2026-07 审计测试补充
+
+本次审计更新只新增测试，不删除既有测试，也不降低既有断言强度。
+
+| 编号 | 测试文件与用例 | 目的 |
+|---|---|---|
+| AT-001 | `tests/test_traceability_p0.py::test_manifest_writes_hashes_when_git_is_unavailable` | 验证 `run_manifest.json` 字段，以及 Git 不可用时仍可生成 manifest。 |
+| AT-002 | `tests/test_traceability_p0.py::test_sync_truth_and_error_are_public_metrics` | 验证 `sync_error_symbols = sync_start_index - true_prefix_symbols`，并确认字段写入公开 JSON。 |
+| AT-003 | `tests/test_traceability_p0.py::test_12db_layered_ber_fields_are_zero_on_recovery` | 验证短文本高 SNR 恢复时 `predecode_ber = payload_ber = ber = 0` 且无帧错误。 |
+| AT-004 | `tests/test_traceability_p0.py::test_low_snr_predecode_and_payload_ber_can_differ` | 验证低 SNR 下物理层 BER 与端到端 payload BER 可以不同。 |
+| AT-005 | `tests/test_traceability_p0.py::test_frame_parse_failure_keeps_predecode_ber` | 验证帧解析失败不会覆盖 `predecode_ber`。 |
+| AT-006 | `tests/test_traceability_p0.py::test_cli_returns_nonzero_when_plot_function_raises` | 验证绘图函数抛出异常时 CLI 返回非零。 |
+| AT-007 | `tests/test_traceability_p0.py::test_cli_rejects_empty_png_as_invalid` | 验证空 PNG 不能被视为有效交付物。 |
+| AT-008 | `tests/test_traceability_p0.py::test_cli_accepts_at_least_two_valid_plots` | 验证 AWGN CLI 至少两张承诺图表有效时可成功。 |
+| AT-009 | `tests/test_level3.py::test_level3_seed_count_controls_trials_and_statistics` | 验证 Level 3 可配置 seed 数、每 seed 原始记录和聚合离散度字段。 |
+| AT-010 | `tests/test_level3.py::test_level3_cli_rejects_nonpositive_seed_count` | 验证非法 `--seed-count` 在实验运行前被拒绝。 |
+
+人工/提交验收检查统一由以下脚本执行：
+
+```bash
+python scripts/verify_submission.py
+```
+
+该脚本运行公开测试、内部测试、统一 CLI、文本哈希比较、metrics schema 检查、
+manifest schema 检查、图表有效性检查和相同 seed 可复现性检查，并写出
+`verification_report.json`。
+
+最终验证需要保留以下边界场景：
+
+- 空文本
+- 单个 ASCII 字符
+- 单个中文字符
+- 中英混合文本
+- Emoji
+- 换行与制表符
+- 低 SNR
+- 不同 seed
+- Rayleigh + ZF
+- Rayleigh + MMSE
+- Rayleigh + MRC
+- 非法 `--seed-count`
+- 绘图失败
+- manifest 采集时 Git 命令不可用

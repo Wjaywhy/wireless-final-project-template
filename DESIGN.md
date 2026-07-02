@@ -726,3 +726,60 @@ Rayleigh 模式保留原十个 Level 2 字段，并增加：
 | v3.1 | 2026-06-24 | 根据 4 项真实公式 Mock，明确 MMSE 的 $N_0>0$ 区分测试、普通 MRC 无正则项、统一 epsilon 失败边界及尚未验证的系统级风险 | 阶段 D：Mock 后设计修订 |
 | v3.2 | 2026-06-24 | 实现全部 Level 3 生产代码：`rayleigh_flat_fading()`（平坦块 Rayleigh，SeedSequence 子流分离）、`estimate_flat_channel()`（前导 LS）、`zf_equalize()`/`mmse_equalize()`（标量均衡）、`mrc_combine()`（普通等噪声 MRC）、`synchronize_branches()`（多分支联合同步）；扩展 `run_pipeline()` 和 `main.py` CLI（`--channel`/`--equalizer`/`--diversity-order`）；创建 `src/level3.py` 独立实验脚本。AWGN 默认路径保留原随机流不变。修复 3 项实现问题：AWGN 前缀兼容性、MRC equalizer 字段记录、noise_variance 类型持久化 | 阶段 E：Level 3 完整实现 |
 | v3.3 | 2026-06-24 | 完成 26 条 Level 3 专项测试（全部通过）；Level 2 回归 53+22=75 条全部通过。多 seed 实验（4 方案 × 6 SNR × 5 seed）更新为当前 `Test.txt` 后确认：AWGN 12 dB 及以上完全恢复；Rayleigh 单分支在当前固定 seed 集下仍有残余帧失败；双分支 MRC 在 12 dB 及以上完全恢复；ZF 与 MMSE 标量硬判决 FER 相同；MRC 平均 FER ≤ 单分支 ZF。更新实测结果与修订记录 | 阶段 F：测试与实验 |
+## 2026-07 审计设计更新
+
+本次更新保持原有通信链路不变：
+
+`Source Encode -> Scramble -> Channel Encode -> Frame Build -> QPSK Modulate -> Channel -> Synchronization -> Demodulate -> Channel Decode -> Descramble -> Source Decode`.
+
+新增内容只增强审计性，不增加新的物理层功能。
+
+### 运行追溯文件
+
+`src/manifest.py` 在 CLI 成功运行后生成 `run_manifest.json`。该文件记录命令行、
+UTC 时间、可用时的 Git commit 与 dirty 状态、Python/平台信息、依赖版本、
+输入输出 SHA-256、运行时间、seed、SNR、调制方式、信道类型和生成文件清单。
+Git 查询失败不会导致核心流程崩溃，Git 字段用 `null` 表示。
+
+### 同步真值字段
+
+`true_prefix_symbols` 由仿真器在进入信道前生成，但接收端同步代码不读取该字段。
+接收完成后，`run_pipeline()` 记录：
+
+- `true_prefix_symbols`
+- `sync_start_index`
+- `sync_error_symbols = sync_start_index - true_prefix_symbols`
+- `sync_success = abs(sync_error_symbols) <= 1`
+
+这些字段用于后验同步审计，不向同步算法泄漏真值。
+
+### 分层 BER 指标
+
+旧字段 `ber` 保留，并定义为等于 `payload_ber`。
+
+- `predecode_ber`：同步和 QPSK 硬判决解调后立即计算的原始 frame-bit BER。
+  比较长度采用发送端 frame bits 长度；超出发送帧长度的额外解调 bit 忽略，
+  缺失的发送帧 bit 按错误计入。
+- `payload_ber`：经过帧解析、信道译码、解扰和 CRC/源解码逻辑后的端到端
+  payload BER。
+- `frame_error_indicator`：单帧指示量，完整恢复为 `0`，失败为 `1`。只有多次
+  试验的均值才应表述为有限样本 FER。
+
+### 图表交付契约
+
+CLI 在绘图后检查图表文件。AWGN 模式预期生成 `constellation.png`、
+`ber_curve.png` 和 `sync_peak.png`，至少两张非空 PNG 有效才视为交付成功。
+Rayleigh 单次 CLI 只检查其实际承诺的 `constellation.png` 和 `sync_peak.png`。
+绘图异常、文件缺失或空文件都会导致 CLI 非零退出。
+
+### Level 3 统计
+
+`python -m src.level3` 支持 `--seed-count N`，默认 `5`，且 `N` 必须为正整数。
+对每个 SNR、每种方案、每个 seed，`level3_metrics.json` 保存原始记录。每个
+聚合点保存 `trial_count`、`mean_ber`、`std_ber`、`mean_fer`、
+`frame_error_count`、`complete_recovery_rate`、`sync_success_rate` 和
+`mean_channel_estimation_error`。无法计算的值写为标准 JSON `null`，不写入 NaN。
+
+所有曲线都是有限样本仿真摘要。它们只能支持“本次有限传输中未观察到误码”
+或“BER 低于当前实验检测分辨率”等表述，不能证明真实 BER 等于 0，也不能证明
+固定理论 MRC dB 增益。

@@ -17,6 +17,7 @@ from src.metrics import save_metrics
 from src.modulation import qpsk_modulate
 from src.pipeline import PREAMBLE_SYMBOLS, run_pipeline
 from src.synchronization import synchronize_branches
+import src.level3 as level3
 
 
 def _symbols():
@@ -267,3 +268,65 @@ def test_cli_rejects_invalid_receiver_combinations(arguments):
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode != 0
     assert "Error:" in result.stderr
+
+
+def test_level3_seed_count_controls_trials_and_statistics(monkeypatch, tmp_path):
+    input_path = tmp_path / "input.txt"
+    input_path.write_text("level3 stats", encoding="utf-8")
+
+    def fake_pipeline(
+            _input_path, output_path, snr_db, seed, _modulation,
+            channel, _equalizer, _diversity):
+        frame_error = int(seed % 2)
+        Path(output_path).write_text("" if frame_error else "level3 stats",
+                                     encoding="utf-8")
+        return {
+            "ber": float(frame_error),
+            "payload_ber": float(frame_error),
+            "predecode_ber": 0.01,
+            "fer": float(frame_error),
+            "frame_error_indicator": frame_error,
+            "text_match_rate": 0.0 if frame_error else 1.0,
+            "checksum_pass": frame_error == 0,
+            "sync_success": True,
+            "true_prefix_symbols": 7,
+            "sync_start_index": 7,
+            "sync_error_symbols": 0,
+            "channel_estimation_error": (
+                None if channel == "awgn" else 0.1 + float(snr_db) * 0.0
+            ),
+            "_raw_aligned_symbols": np.asarray([1 + 1j]),
+            "_equalized_symbols": np.asarray([1 + 1j]),
+        }
+
+    monkeypatch.setattr(level3, "run_pipeline", fake_pipeline)
+    summary = level3.run_experiments(
+        str(input_path), str(tmp_path / "level3"), 2026, seed_count=2
+    )
+
+    assert summary["seed_count"] == 2
+    for scheme in summary["schemes"].values():
+        for point in scheme["points"]:
+            assert point["trial_count"] == 2
+            assert "std_ber" in point
+            assert "frame_error_count" in point
+            assert "complete_recovery_rate" in point
+            assert len(point["per_seed"]) == 2
+            assert "predecode_ber" in point["per_seed"][0]
+    json.dumps(summary, allow_nan=False)
+
+
+def test_level3_cli_rejects_nonpositive_seed_count(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "src.level3",
+            "--input", "Test.txt",
+            "--output-dir", str(tmp_path),
+            "--seed", "2026",
+            "--seed-count", "0",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "positive integer" in result.stderr
