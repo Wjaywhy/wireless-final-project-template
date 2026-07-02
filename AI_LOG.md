@@ -112,7 +112,7 @@ python main.py --input Test.txt --output results/received.txt --snr 12 --seed 20
 |---|---|---|
 | Level 2 自有测试 (tests/test_mock.py + test_e2e.py) | 53/53 | 全部通过 |
 | 公开测试 (public_tests/) | 22/22 | 全部通过 |
-| **Level 2 合计** | **75/75** | 不含 Level 3；完整结果含 Level 3 共 101/101（见阶段6） |
+| **Level 2 合计** | **75/75** | 不含 Level 3；完整结果含 Level 3 和公式 Mock 共 105/105（见阶段6） |
 
 **CLI 实际运行：**
 
@@ -122,7 +122,7 @@ python main.py --input Test.txt --output results/received.txt --snr 12 --seed 20
 
 输出：
 ```
-Pipeline complete in 4.65s
+Pipeline complete in 2.32s
   SNR: 12.0 dB, Seed: 2026
   BER: 0.000000, FER: 0.0
   Text match: 1.0000
@@ -137,7 +137,7 @@ Pipeline complete in 4.65s
   "seed": 2026,
   "modulation": "qpsk",
   "channel": "awgn",
-  "payload_bits": 6128,
+  "payload_bits": 5376,
   "ber": 0.0,
   "fer": 0.0,
   "text_match_rate": 1.0,
@@ -147,7 +147,7 @@ Pipeline complete in 4.65s
 ```
 
 **生成文件：**
-- `results/received.txt` — 与 Test.txt 完全一致（262 字符）
+- `results/received.txt` — 与 Test.txt 完全一致（250 字符 / 672 bytes）
 - `results/metrics.json` — 10 个必需字段齐全
 - `results/constellation.png` — 12 dB 星座图，点紧密聚集
 - `results/ber_curve.png` — 0~12 dB BER 曲线（含正确理论参考）
@@ -213,9 +213,9 @@ Pipeline complete in 4.65s
 | 前置符号使用高斯随机而非 QPSK | 中 | 改为经 `qpsk_modulate()` 生成标准 QPSK 符号 |
 | CLI 未拒绝 nan/inf SNR | 中 | 增加 `math.isfinite()` 检查 |
 | BER=0 在对数坐标不可见 | 低 | 使用检测下限绘图 + 标注 |
-| 文档数据过时（payload_bits=1544） | 低 | 更新为原始 Test.txt 的 6128 bit |
+| 文档数据过时（旧 payload_bits） | 低 | 当前提交输入对齐 `public_tests/conftest.py::SAMPLE_TEXT`，更新为 5376 bit |
 
-所有修复已通过 Level 2 正式测试验证（53 自有 + 22 公开 = 75 条；Level 3 完成后完整合计 101 条，见阶段6），教师原始 Test.txt（262 字符 / 6128 bit）在 12 dB 下完全恢复（BER=0, FER=0, match=1.0, CRC=True, 耗时 4.65s）。
+所有修复已通过 Level 2 正式测试验证（53 自有 + 22 公开 = 75 条；Level 3 完成后完整合计 105 条，见阶段6）。当前提交的 `Test.txt` 与 `public_tests/conftest.py::SAMPLE_TEXT` 字节级一致（250 字符 / 5376 bit），在 12 dB 下完全恢复（BER=0, FER=0, match=1.0, CRC=True, 耗时 2.32s）。
 
 ### v2.0 修复（2026-06-24）
 
@@ -391,21 +391,21 @@ python -m src.level3 --input Test.txt --output-dir results --seed 2026
 | L3-IT-009 | CLI 非法组合全部拒绝 | ✅ |
 | L3-MP-001 | 固定多 seed MRC FER ≤ 单分支 ZF | ✅ |
 
-**多 seed 实验结论（seed=2026, 5 个派生 seed, 教师原始 Test.txt 262 字符）：**
+**多 seed 实验结论（seed=2026, 5 个派生 seed, 当前 Test.txt 250 字符 / 5376 bit）：**
 
 | 方案 | 0 dB | 4 dB | 8 dB | 12 dB | 16 dB | 20 dB |
 |---|---|---|---|---|---|---|
-| **AWGN 基线** (FER) | 1.0 | 1.0 | 0.0 | 0.0 | 0.0 | 0.0 |
-| **Rayleigh+ZF** (FER) | 1.0 | 1.0 | 0.8 | 0.2 | 0.0 | 0.0 |
-| **Rayleigh+MMSE** (FER) | 1.0 | 1.0 | 0.8 | 0.2 | 0.0 | 0.0 |
+| **AWGN 基线** (FER) | 1.0 | 1.0 | 0.8 | 0.0 | 0.0 | 0.0 |
+| **Rayleigh+ZF** (FER) | 1.0 | 1.0 | 1.0 | 0.4 | 0.4 | 0.4 |
+| **Rayleigh+MMSE** (FER) | 1.0 | 1.0 | 1.0 | 0.4 | 0.4 | 0.4 |
 | **Rayleigh+MRC** (FER) | 1.0 | 0.8 | 0.4 | 0.0 | 0.0 | 0.0 |
 
 关键观察：
-- AWGN 基线在 8 dB 以上完全恢复（与 Level 2 结论一致）
-- Rayleigh 单分支需要 16 dB 以上才能稳定恢复（深衰落导致 8-12 dB 仍有帧失败）
+- AWGN 基线在 12 dB 以上完全恢复；8 dB 在当前 5 个派生 seed 下仍有帧失败
+- Rayleigh 单分支在当前固定 5 seed 下 12-20 dB 仍有 40% 帧失败，不能表述为稳定恢复
 - ZF 与 MMSE 在标量平坦信道硬判决下 FER 相同（与阶段 4 设计预期一致）
 - 双分支 MRC 在 12 dB 即实现完全恢复，验证了分集增益
-- 同步成功率在所有方案和 SNR 下均为 100%（前导互相关对平坦衰落鲁棒）
+- AWGN 与 MRC 同步成功率为 100%；单分支 Rayleigh 在低/中 SNR 下存在同步失败样本
 - 多 seed 平均 MRC FER ≤ 单分支 ZF FER（L3-MP-001 通过）
 
 **生成图表验证：**
@@ -437,9 +437,10 @@ python -m src.level3 --input Test.txt --output-dir results --seed 2026
 | 测试类别 | 通过/总数 | 备注 |
 |---|---|---|
 | Level 2 自有测试 (tests/test_mock.py + test_e2e.py) | 53/53 | 全部通过 |
+| Level 3 公式 Mock (tests/test_level3_mock_prototype.py) | 4/4 | 全部通过 |
 | Level 3 专项测试 (tests/test_level3.py) | 26/26 | 全部通过 |
 | 公开测试 (public_tests/) | 22/22 | 全部通过 |
-| **合计** | **101/101** | |
+| **合计** | **105/105** | |
 
 ## Level 3 采纳理由总结
 

@@ -359,7 +359,7 @@ pytest tests/test_level3_mock_prototype.py -q
 
 ## 测试结论（最终）
 
-Level 2 Mock 11/11 通过；Level 3 最小公式 Mock 4/4 通过；Level 3 完整生产测试 26/26 通过；Level 2 回归 53/53 通过；公开测试 22/22 通过。**合计 101/101 全部通过。**
+按当前 pytest 收集口径：Level 2 自有测试 53/53 通过；Level 3 最小公式 Mock 4/4 通过；Level 3 完整生产测试 26/26 通过；公开测试 22/22 通过。**合计 105/105 全部通过。**
 
 ### Level 3 最终验证（2026-06-24）
 

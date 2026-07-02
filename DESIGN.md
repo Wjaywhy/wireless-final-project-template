@@ -489,9 +489,9 @@ CRC 失败说明帧载荷中存在不可纠正的 bit 错误。当前设计对 C
 
 ## 实测结果
 
-以下为 `seed=2026, mod=qpsk, channel=awgn` 下的实测结果（教师原始 Test.txt, 262 字符, 6128 bit payload）。
+以下为 `seed=2026, mod=qpsk, channel=awgn` 下的实测结果（当前 `Test.txt` 已对齐 `public_tests/conftest.py::SAMPLE_TEXT`，250 字符，5376 bit payload）。
 
-帧完整性校验（preamble 验证 + 最小长度 + coded_length 边界 + CRC 检查）使系统在 preamble 比特错误时直接判定帧解析失败，形成"悬崖效应"：8 dB 以上完全恢复，6 dB 以下整帧失败。
+帧完整性校验（preamble 验证 + 最小长度 + coded_length 边界 + CRC 检查）使系统在 preamble 比特错误时直接判定帧解析失败，形成"悬崖效应"：当前 `seed=2026` 的单次 CLI 在 12 dB 下完全恢复，低 SNR 下可能整帧失败。
 
 | SNR (dB) | BER | FER | text_match_rate | checksum_pass | sync_start_index |
 |---|---|---|---|---|---|
@@ -510,22 +510,22 @@ CRC 失败说明帧载荷中存在不可纠正的 bit 错误。当前设计对 C
 
 ### Level 3 多 seed 实测结果
 
-以下为 `seed=2026` 派生的 5 个独立实验 seed、教师原始 Test.txt（262 字符 / 6128 bit payload）下的平均 FER。每 SNR 点 5 次独立衰落实现取均值。
+以下为 `seed=2026` 派生的 5 个独立实验 seed、当前 `Test.txt`（250 字符 / 5376 bit payload）下的平均 FER。每 SNR 点 5 次独立衰落实现取均值。
 
 | SNR (dB) | AWGN 基线 | Rayleigh+ZF | Rayleigh+MMSE | Rayleigh+MRC (2-branch) |
 |---|---|---|---|---|
 | 0 | 1.0 | 1.0 | 1.0 | 1.0 |
 | 4 | 1.0 | 1.0 | 1.0 | 0.8 |
-| 8 | 0.0 | 0.8 | 0.8 | 0.4 |
-| 12 | 0.0 | 0.2 | 0.2 | 0.0 |
-| 16 | 0.0 | 0.0 | 0.0 | 0.0 |
-| 20 | 0.0 | 0.0 | 0.0 | 0.0 |
+| 8 | 0.8 | 1.0 | 1.0 | 0.4 |
+| 12 | 0.0 | 0.4 | 0.4 | 0.0 |
+| 16 | 0.0 | 0.4 | 0.4 | 0.0 |
+| 20 | 0.0 | 0.4 | 0.4 | 0.0 |
 
 关键观察：
-- **AWGN 基线：** 与 Level 2 单 seed 结论一致，8 dB 以上完全恢复。
-- **Rayleigh 单分支（ZF/MMSE）：** 因深衰落可能，8 dB 仍有 80% 帧失败；需 16 dB 以上才能稳定恢复。标量平坦信道硬判决下 ZF 与 MMSE 的 FER 相同（符合阶段 D 设计预期）。
-- **双分支 MRC：** 在 12 dB 即实现完全恢复，相比单分支有约 4 dB 的有效分集增益。两个独立分支同时深衰落的概率显著低于单分支。
-- **同步：** 所有方案和 SNR 下同步成功率均为 100%——前导互相关对平坦衰落具有鲁棒性，远高于 preamble 比特级正确接收的要求。
+- **AWGN 基线：** 12 dB 及以上完全恢复；8 dB 在当前 5 个派生 seed 下仍有 80% 帧失败，说明有限样本曲线存在悬崖效应。
+- **Rayleigh 单分支（ZF/MMSE）：** 当前固定 5 seed 下 12-20 dB 平均 FER 仍为 0.4，主要由少数深衰落/同步失败样本主导；不能据此声称单分支 Rayleigh 稳定恢复。标量平坦信道硬判决下 ZF 与 MMSE 的 FER 相同（符合阶段 D 设计预期）。
+- **双分支 MRC：** 在 12 dB 及以上实现完全恢复，相比单分支显著降低帧失败率，验证了接收分集对深衰落风险的缓解。
+- **同步：** AWGN 与 MRC 的同步成功率为 100%；单分支 Rayleigh 在低/中 SNR 下同步成功率为 60%，16 dB 及以上恢复到 100%。同步失败是单分支方案残余 FER 的主要风险之一。
 - **有限样本提示：** 以上为 5 个固定 seed 的平均值，不构成严格理论性能曲线。
 
 ## Level 3 高级模块设计
@@ -718,11 +718,11 @@ Rayleigh 模式保留原十个 Level 2 字段，并增加：
 | v1.1 | 2026-06-24 | 确定前导序列（7 阶 LFSR m 序列）；补充 CRC-32 约定（zlib.crc32、bit→bytes MSB 优先、零长度处理）；修正 QPSK bit 到 I/Q 映射规则（b1→I, b0→Q）；更新 build_frame/parse_frame 签名；补充空输入行为 | Mock 测试 MT-001~011 结果 |
 | v1.2 | 2026-06-24 | 补充实测结果表（0~12 dB）；更新预期结果为实测数据；确认同步在所有 SNR 下稳定 | 端到端测试 + CLI 实际运行 |
 | v1.3 | 2026-06-24 | CRC 修复、FER 修正、前置符号 QPSK、帧校验、CLI nan/inf、BER 图零误码标注 | 最终审计修复 |
-| v1.4 | 2026-06-24 | 理论曲线修正（仅保留 uncoded QPSK 参考，删除非精确重复码理论）；使用教师原始 Test.txt 重测 | 曲线修正 |
+| v1.4 | 2026-06-24 | 理论曲线修正（仅保留 uncoded QPSK 参考，删除非精确重复码理论）；使用当时 Test.txt 重测 | 曲线修正 |
 | v2.0 | 2026-06-24 | **BER：** 实现 `calculate_ber()`，共同长度逐 bit 比较 + 长度差计错；**CRC/FER：** 增加 `coded_length==3×original_length` 和 `len(descrambled)==original_length` 条件；CRC 仅对接收端 `descrambled` 计算；**帧解析：** 强化 preamble 校验、coded_length/crc 边界、padding 处理；**图表：** 删除非精确理论曲线，仅保留理想 uncoded QPSK 参考并明确标注；**种子：** 子流使用确定派生 seed；**文档：** 全部更新为 v2.0 | 最终修复 |
 | v2.1 | 2026-06-24 | 修正 BER 图默认生成流程的过时描述；明确 UTF-8 严格解码异常在模块层抛出、在端到端管线层安全置空并继续输出失败指标 | 文档—实现一致性审计 |
 | v2.2 | 2026-06-24 | 修正设计范围与实测结果表述；完善接收端长度、CRC 和 FER 判定流程；区分真实同步偏移与估计起点；收敛归一化互相关的性能表述；核对信道译码异常行为 | 最终文档一致性审计 |
 | v3.0 | 2026-06-24 | 定义平坦块 Rayleigh、前导 LS 信道估计、ZF/MMSE、双分支联合同步、普通 MRC、CLI、指标、随机子流和预期风险；不含 Level 3 实验结果 | 阶段 A：Level 3 设计 |
 | v3.1 | 2026-06-24 | 根据 4 项真实公式 Mock，明确 MMSE 的 $N_0>0$ 区分测试、普通 MRC 无正则项、统一 epsilon 失败边界及尚未验证的系统级风险 | 阶段 D：Mock 后设计修订 |
 | v3.2 | 2026-06-24 | 实现全部 Level 3 生产代码：`rayleigh_flat_fading()`（平坦块 Rayleigh，SeedSequence 子流分离）、`estimate_flat_channel()`（前导 LS）、`zf_equalize()`/`mmse_equalize()`（标量均衡）、`mrc_combine()`（普通等噪声 MRC）、`synchronize_branches()`（多分支联合同步）；扩展 `run_pipeline()` 和 `main.py` CLI（`--channel`/`--equalizer`/`--diversity-order`）；创建 `src/level3.py` 独立实验脚本。AWGN 默认路径保留原随机流不变。修复 3 项实现问题：AWGN 前缀兼容性、MRC equalizer 字段记录、noise_variance 类型持久化 | 阶段 E：Level 3 完整实现 |
-| v3.3 | 2026-06-24 | 完成 26 条 Level 3 专项测试（全部通过）；Level 2 回归 53+22=75 条全部通过。多 seed 实验（4 方案 × 6 SNR × 5 seed）确认：AWGN 8 dB 以上完全恢复；Rayleigh 单分支需 16 dB；双分支 MRC 在 12 dB 完全恢复（分集增益验证）；ZF 与 MMSE 标量硬判决 FER 相同（符合预期）；同步成功率全部 100%；MRC 平均 FER ≤ 单分支 ZF。更新实测结果与修订记录 | 阶段 F：测试与实验 |
+| v3.3 | 2026-06-24 | 完成 26 条 Level 3 专项测试（全部通过）；Level 2 回归 53+22=75 条全部通过。多 seed 实验（4 方案 × 6 SNR × 5 seed）更新为当前 `Test.txt` 后确认：AWGN 12 dB 及以上完全恢复；Rayleigh 单分支在当前固定 seed 集下仍有残余帧失败；双分支 MRC 在 12 dB 及以上完全恢复；ZF 与 MMSE 标量硬判决 FER 相同；MRC 平均 FER ≤ 单分支 ZF。更新实测结果与修订记录 | 阶段 F：测试与实验 |

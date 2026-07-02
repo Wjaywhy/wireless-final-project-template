@@ -3,7 +3,7 @@
   "seed": 2026,
   "modulation": "qpsk",
   "channel": "awgn",
-  "payload_bits": 6128,
+  "payload_bits": 5376,
   "ber": 0.0,
   "fer": 0.0,
   "text_match_rate": 1.0,
